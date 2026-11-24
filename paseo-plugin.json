@@ -1,0 +1,26 @@
+{
+  "id": "paseo-task-manager",
+  "name": "agent-pm 任务看板采集",
+  "description": "将选中的 Paseo 主机会话同步到 agent-pm 中心。",
+  "requirements": {
+    "paseo": ">=0.17.0"
+  },
+  "build": [
+    [
+      "npm",
+      "ci",
+      "--omit=dev",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund"
+    ],
+    [
+      "npm",
+      "run",
+      "build"
+    ]
+  ],
+  "media": [
+    "assets/history-import.png"
+  ]
+}

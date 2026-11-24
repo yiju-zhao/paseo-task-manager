@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "index.server.ts",
+    "index.client.tsx",
+    "server",
+    "client",
+    "shared",
+    "tests",
+    "vitest.config.ts"
+  ],
+  "exclude": [
+    "tests/**/*.compat.test.ts"
+  ]
+}

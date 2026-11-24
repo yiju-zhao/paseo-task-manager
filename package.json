@@ -1,0 +1,31 @@
+{
+  "name": "paseo-task-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "将选中的 Paseo 主机会话同步到 agent-pm 中心。",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "build": "node server/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:compat": "vitest run --config tests/compat.config.ts"
+  },
+  "dependencies": {
+    "@getpaseo/client": "0.17.3",
+    "esbuild": "0.28.2"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "0.17.3",
+    "@getpaseo/protocol": "0.17.3",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "react": "19.3.1",
+    "react-native": "0.81.5",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5",
+    "zod": "4.6.7"
+  }
+}

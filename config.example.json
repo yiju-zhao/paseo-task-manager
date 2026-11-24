@@ -1,0 +1,20 @@
+{
+  "daemonUrl": "ws://127.0.0.1:6767/ws",
+  "daemonServerId": "srv_REPLACE_WITH_MAC_MINI_ID",
+  "centerUrl": "http://127.0.0.1:7718",
+  "stateRoot": "~/.local/state/agent-pm-paseo-plugin",
+  "sources": [
+    {
+      "serverId": "srv_REPLACE_WITH_MAC_MINI_ID",
+      "sourceId": "paseo-mac-mini",
+      "machine": "mac-mini",
+      "tokenFile": "~/.config/herdr-pm/paseo-mac-mini.token"
+    },
+    {
+      "serverId": "srv_REPLACE_WITH_GX10_ID",
+      "sourceId": "paseo-gx10-090e",
+      "machine": "gx10-090e",
+      "tokenFile": "~/.config/herdr-pm/paseo-gx10-090e.token"
+    }
+  ]
+}
