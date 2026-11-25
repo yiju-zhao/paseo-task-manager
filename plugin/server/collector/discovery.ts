@@ -1,4 +1,4 @@
-import type { AgentObservation } from '../protocol/ingest-v2.ts';
+import type { AgentObservation } from '../../../src/shared/ingest-v2.ts';
 import type { PaseoCollectorConfig } from './config.ts';
 import { isLoaded, nativeSessionId } from './sdk.ts';
 import type { AgentSnapshot, DirectoryEntry, PaseoSdk } from './sdk.ts';

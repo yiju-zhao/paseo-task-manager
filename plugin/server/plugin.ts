@@ -1,29 +1,36 @@
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createPaseoClient } from '@getpaseo/client';
 import { openSource, optionalFileCounter } from './route.ts';
 import { HistoryImport } from './collector/history-import.ts';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
-import { createCenterClient } from './collector/client.ts';
+import { startCenter, type RunningCenter } from '../../src/server/center.ts';
+import { loadServerConfig } from '../../src/server/config.ts';
+import { inProcessClient } from './in-process.ts';
+
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { PaseoCollector } from './collector/loop.ts';
 import { Outbox } from './collector/outbox.ts';
 import { isLoaded } from './collector/sdk.ts';
 import { StateDir } from './collector/state-store.ts';
-import { readConfig, type Source } from './config.ts';
+import { checkStoragePath, pluginPaths } from './config.ts';
+import type { PaseoSource } from '../../src/server/ingest-repo.ts';
 import { importProgress, settings, type Preferences } from '../shared/settings.ts';
 import { RemoteWorkspaces, type UnknownFileCount } from './workspaces.ts';
 
-export default function contribute(server: PluginServerContext) {
+declare const CHECKOUT_WEB_DIR: string;
+
+export default function contribute(server: Pick<PluginServerContext, 'registerSettings' | 'handle'>) {
   const stored = server.registerSettings(settings);
-  const cfg = readConfig();
+  const cfg = pluginPaths();
+  const config = loadServerConfig(cfg.configPath);
+  checkStoragePath(config.dbPath, cfg.daemonHome);
   const local = createPaseoClient({ url: cfg.daemonUrl, clientId: 'paseo-task-manager-' + randomUUID(), connectTimeoutMs: 5000 });
-  const writers = new Map(cfg.sources.map(s => [s.serverId, 'paseo-' + randomUUID()]));
+  const writers = new Map<string, string>();
   const workers = new Map<string, PaseoCollector>();
   const ledgers = new Map<string, HistoryImport>();
   const unknownFiles = new Map<string, Map<string, UnknownFileCount>>();
-  const missing = new Set<string>();
+  const bindings = new Map<string, PaseoSource>();
   let prefs: Preferences = { selectedHosts: [], readClosed: false };
   let stopped = false;
   let pending = false;
@@ -31,26 +38,30 @@ export default function contribute(server: PluginServerContext) {
   const selected = (id: string) => !stopped && prefs.selectedHosts.includes(id);
   const log = (s: string) => console.info(s);
 
-  async function start(source: Source) {
+  let center: RunningCenter | undefined;
+  const startup = startCenter({ config, configDir: dirname(cfg.configPath),
+    webDir: CHECKOUT_WEB_DIR, log }).then(value => { center = value; });
+  void startup.catch(err => console.error('center startup', String(err)));
+
+  async function start(source: PaseoSource, center: RunningCenter) {
     const { serverId, sourceId } = source;
-    const token = readFileSync(source.tokenFile, 'utf8').trim();
-    if (!token) throw new Error('empty tokenFile for ' + sourceId);
+    if (!writers.has(serverId)) writers.set(serverId, 'paseo-' + randomUUID());
     const count = optionalFileCounter(cfg.daemonUrl, cfg.daemonServerId, serverId);
     const { sdk, repository } = await openSource(local, serverId, () => selected(serverId), () => prefs.readClosed, count);
     let state: StateDir | undefined;
     let worker: PaseoCollector | undefined;
     try {
       const config = PaseoCollectorConfig.parse({
-        ...source, server: cfg.centerUrl, paseo: { url: cfg.daemonUrl, serverId },
+        ...source, paseo: { url: cfg.daemonUrl, serverId },
         stateDir: join(cfg.stateRoot, sourceId), readArchivedTracked: true, includeArchivedHistory: true,
       });
-      state = StateDir.open(config.stateDir, { sourceId, serverId, server: cfg.centerUrl }, writers.get(serverId));
+      state = StateDir.open(config.stateDir, { sourceId, serverId, server: cfg.configPath }, writers.get(serverId));
       const ledger = new HistoryImport(join(config.stateDir, 'history.sqlite'));
       ledgers.set(serverId, ledger);
       const remote = serverId === cfg.daemonServerId ? null : new RemoteWorkspaces(repository, config.stateDir);
       if (remote) unknownFiles.set(serverId, remote.unknownCounts);
       worker = new PaseoCollector(config, {
-        state, sdk, client: createCenterClient({ server: cfg.centerUrl, token }), outbox: new Outbox(config.stateDir),
+        state, sdk, client: inProcessClient(center.db, source), outbox: new Outbox(config.stateDir),
         now: () => new Date(), log,
         history: { ledger, enabled: () => selected(serverId) && prefs.readClosed },
         readContent: agent => selected(serverId) && (prefs.readClosed || isLoaded(agent)),
@@ -79,7 +90,7 @@ export default function contribute(server: PluginServerContext) {
   }
 
   function savedCounts(id: string) {
-    const source = cfg.sources.find(s => s.serverId === id);
+    const source = bindings.get(id);
     return source ? HistoryImport.savedCounts(join(cfg.stateRoot, source.sourceId, 'history.sqlite')) : { total: 0, completed: 0 };
   }
 
@@ -93,28 +104,31 @@ export default function contribute(server: PluginServerContext) {
   }));
 
   async function reconcile() {
+    await startup;
+    const running = center;
+    if (!running) return;
     // Apply deselections even if directory lookup fails.
     for (const [id, worker] of workers) {
       if (!selected(id)) await stop(id, worker);
     }
     if (!prefs.selectedHosts.length || stopped) return;
-    for (const id of prefs.selectedHosts) {
-      if (!writers.has(id) && !missing.has(id)) {
-        missing.add(id);
-        console.error('Selected host has no sourceId/tokenFile binding in collector config:', id);
-      }
-    }
     await local.connect();
     const hosts = await local.hosts.list();
     if (hosts.self.serverId !== cfg.daemonServerId) throw new Error('local daemon serverId mismatch');
     const online = new Set([hosts.self.serverId, ...hosts.hosts.filter(h => h.enabled && h.status === 'online' && h.serverId).map(h => h.serverId)]);
-    await Promise.all(cfg.sources.map(async source => {
-      const id = source.serverId;
+    await Promise.all(prefs.selectedHosts.map(async id => {
       const existing = workers.get(id);
       if (existing && !online.has(id)) await stop(id, existing);
-      if (!existing && selected(id) && online.has(id)) {
-        try { await start(source); } catch (err) { console.error(source.sourceId, String(err)); }
-      }
+      if (existing || !online.has(id) || !selected(id)) return;
+      const row = running.db.prepare('SELECT source_id, machine FROM ingest_sources WHERE server_id = ? AND kind = ?')
+        .get(id, 'paseo');
+      const configured = Object.entries(config.paseoCollectors ?? {}).find(([, source]) => source.serverId === id);
+      if (!row && !configured) return;
+      const sourceId = row ? String(row.source_id) : configured![0];
+      const machine = row ? String(row.machine) : configured![1].machine;
+      const source = { serverId: id, sourceId, machine };
+      bindings.set(id, source);
+      try { await start(source, running); } catch (err) { console.error(sourceId, String(err)); }
     }));
   }
   function refresh() {
@@ -142,6 +156,10 @@ export default function contribute(server: PluginServerContext) {
     await unsubscribe();
     await current;
     try { await Promise.all([...workers].map(([id, w]) => stop(id, w))); }
-    finally { await local.close(); }
+    finally {
+      await local.close();
+      await startup.catch(() => {});
+      await center?.stop();
+    }
   };
 }

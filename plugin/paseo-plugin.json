@@ -1,7 +1,7 @@
 {
   "id": "paseo-task-manager",
-  "name": "agent-pm 任务看板采集",
-  "description": "将选中的 Paseo 主机会话同步到 agent-pm 中心。",
+  "name": "任务看板中心",
+  "description": "采集所选 Paseo 主机的会话，运行任务看板、摘要调度和 MCP 服务。",
   "requirements": {
     "paseo": ">=0.17.0"
   },

@@ -10,15 +10,14 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
+    "resolveJsonModule": true,
     "types": [
       "node"
     ]
   },
   "include": [
     "index.server.ts",
-    "index.client.tsx",
     "server",
-    "client",
     "shared",
     "tests",
     "vitest.config.ts"

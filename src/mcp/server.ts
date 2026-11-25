@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import manifest from '../../package.json' with { type: 'json' };
 import type { DatabaseSync } from 'node:sqlite';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -13,7 +13,7 @@ import { readTools } from './read-tools.ts';
 const MAX_BODY_BYTES = 64 * 1024;
 
 /** The version the MCP server reports in `initialize`: the package's own. */
-const VERSION = (JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string }).version;
+const VERSION = manifest.version;
 
 /**
  * Mounts the external MCP endpoint at `/mcp` (Streamable HTTP, stateless, JSON responses). Only the read tools and

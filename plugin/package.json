@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "node server/build.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json",
     "test": "vitest run",
     "test:compat": "vitest run --config tests/compat.config.ts"
   },

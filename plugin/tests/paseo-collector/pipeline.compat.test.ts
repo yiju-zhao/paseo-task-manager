@@ -36,7 +36,7 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-function startCollector(extra: { workspace?: () => Promise<import('../../server/protocol/workspace.ts').Workspace | null> } = {}): PaseoCollector {
+function startCollector(extra: { workspace?: () => Promise<import('../../../src/shared/workspace.ts').Workspace | null> } = {}): PaseoCollector {
   const cfg = PaseoCollectorConfig.parse({
     server: 'http://center.test',
     sourceId: PASEO_SOURCE,

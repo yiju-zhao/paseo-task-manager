@@ -7,7 +7,7 @@ import { createCenterClient } from '../../server/collector/client.ts';
 import type { CenterClient } from '../../server/collector/client.ts';
 import { PaseoCollectorConfig } from '../../server/collector/config.ts';
 import { PaseoCollector } from '../../server/collector/loop.ts';
-import { LEASE_TTL_MS } from '../../server/protocol/ingest-v2.ts';
+import { LEASE_TTL_MS } from '../../../src/shared/ingest-v2.ts';
 import { Outbox } from '../../server/collector/outbox.ts';
 import { StateDir } from '../../server/collector/state-store.ts';
 import { count, MACHINE, PASEO_SOURCE, PASEO_TOKEN, SERVER_ID, startCenter } from '@agent-pm/tests/helpers/center.ts';

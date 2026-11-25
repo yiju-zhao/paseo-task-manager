@@ -86,7 +86,7 @@
 
 4. **进程内入库。** 采集器现在通过 HTTP 客户端（`plugin/server/collector/client.ts`）向中心申请租约、上报快照和批次、查询检查点。新增一个实现同一接口的进程内版本：直接调用 `src/server/ingest-repo.ts` 里 HTTP 路由调用的同一批函数，走同一个事务，不再需要 HTTP 和令牌。来源身份沿用数据库里已有的：按 daemon 的 serverId 找到 `ingest_sources` 里对应的 `source_id` 和机器名，检查点接着走，不能换新的来源 ID 从头读。离线暂存（outbox）的逻辑不变。
 
-5. **配置。** 插件配置文件新增 `serverConfig`（中心配置文件的绝对路径），删去 `centerUrl` 和各来源的 `tokenFile`。`sources` 列表本 ticket 暂时保留，B4 之后删除。
+5. **配置。** 插件按本机 daemon 的 serverId 读取唯一的 `<config 目录>/paseo-task-manager/<serverId>/config.json`。它直接包含中心配置。连接地址和 serverId 从 daemon 运行信息读取，采集状态使用默认目录。移除旧插件配置及其中的来源和 token 文件绑定。
 
 6. **去掉重复代码。** `plugin/server/protocol/` 是 `src/shared/` 的副本，删掉，插件改为直接引用 `src/shared/`。插件采集器补上阶段 A 的回合 ID（`plugin/server/collector/normalize.ts`），和根目录的采集器一致。根目录的 `src/paseo-collector/` 和 `collect-paseo` 命令仍有机器在用，本期不删，切换上线完成后另行删除。
 
@@ -109,7 +109,7 @@
 | 同上 | 时间线条目带回合 ID | 插件采集器归一后的事件带同一个回合 ID |
 | `plugin/tests/` 下新文件 | 插件服务端入口启动后执行清理函数，再启动一次 | 只有一个中心、一套定时器；第一次的端口和数据库已释放 |
 
-**隔离验证**（结果写进汇报）：在隔离 daemon 上按路径安装插件，`serverConfig` 指向一份测试配置（临时数据库、测试端口）。确认插件状态为 running，测试端口上的 `/status` 和 `/mcp` 可用；`paseo plugin reload` 两次后仍只有一个实例；`paseo plugin logs` 没有错误。
+**隔离验证**（结果写进汇报）：在隔离 daemon 上按路径安装插件，使用该隔离 daemon 自己的配置（临时数据库、测试端口）。确认插件状态为 running，测试端口上的 `/status` 和 `/mcp` 可用；`paseo plugin reload` 两次后仍只有一个实例；`paseo plugin logs` 没有错误。
 
 ---
 
@@ -171,7 +171,7 @@
 - **一键接入**：插件界面借用 app 到那台机器的现有连接（`getPaseoClient(serverId)`），读出它 daemon 配置里的监听地址，再在本机 daemon 上登记（`usePaseo()` 的 `hosts.add`，等同于 `paseo host add`）。那台机器只监听本机回环地址或设了密码时，按钮不可用，并写明原因，提示改用手填配对链接。判断依据以 `@getpaseo/client` 的类型和返回值为准。
 - **手填**：地址可以是 `主机:端口`、SSH 地址，或对方用 `paseo daemon pair` 生成的配对链接。登记失败时显示 Paseo 返回的错误码。配对链接含密钥，插件设置和日志里都不留存。
 - **默认不采集**：新登记的机器默认关闭"采集"。关掉"采集"只停止采集，不删除登记。
-- **来源身份**：一台机器的来源 ID 和机器名，先按 serverId 找 `ingest_sources` 里已有的；没有就用 `paseo-<名字的 slug>` 和它的名字。插件配置文件里的 `sources` 列表删除。
+- **来源身份**：一台机器的来源 ID 和机器名，先按 serverId 找 `ingest_sources` 里已有的；没有就用 `paseo-<名字的 slug>` 和它的名字。
 
 **测试**
 

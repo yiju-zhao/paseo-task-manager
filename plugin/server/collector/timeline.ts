@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { BatchV2, Cursor, Gap, TimelineEvent } from '../protocol/ingest-v2.ts';
+import type { BatchV2, Cursor, Gap, TimelineEvent } from '../../../src/shared/ingest-v2.ts';
 import { isUnsettled, normalizeEntry } from './normalize.ts';
 import type { PaseoSdk, TimelinePage } from './sdk.ts';
 

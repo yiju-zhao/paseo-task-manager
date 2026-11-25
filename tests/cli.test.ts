@@ -382,10 +382,7 @@ test('cli.ts imports server modules only dynamically, so the collect path never 
   for (const spec of [
     './server/config.ts',
     './server/db.ts',
-    './server/http.ts',
-    '@hono/node-server',
-    './understand/scheduler.ts',
-    './understand/agent-sdk.ts',
+    './server/center.ts',
   ]) {
     expect(source).toContain(`await import('${spec}')`);
   }

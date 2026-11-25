@@ -1,15 +1,10 @@
 #!/usr/bin/env node
-import { readFileSync } from 'node:fs';
-import type { Server } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 import { loadCollectorConfig } from './collector/config.ts';
 import { runCollector } from './collector/loop.ts';
 import { defaultOpenDeps, runOpen } from './lookup/command.ts';
-import type { MergeLlm } from './server/merge-routes.ts';
-import type { Decider } from './understand/decider.ts';
-import type { Scheduler } from './understand/scheduler.ts';
 
 // Server modules (node:sqlite, hono) are loaded only inside the `server` command, with a dynamic
 // import: the single-file collector binary is built with bun, which has no node:sqlite, so the
@@ -114,103 +109,29 @@ async function runServer(args: string[], io: Io): Promise<number> {
   if (process.versions.bun) {
     throw new Error('the server needs node:sqlite, which bun lacks: run it with node (node src/cli.ts server --config <path>)');
   }
-  const { loadServerConfig, understandingSettings } = await import('./server/config.ts');
-  const { openDb } = await import('./server/db.ts');
-  const { createApp } = await import('./server/http.ts');
-  const { ChangeFeed } = await import('./server/change-feed.ts');
-  const { attachStream } = await import('./server/stream.ts');
-  const { disabledStatus } = await import('./understand/status.ts');
-  const { serve } = await import('@hono/node-server');
-
-  const config = loadServerConfig(configPath);
-  const understanding = understandingSettings(config);
-  // Read once, before anything is opened: a token file that is configured but unusable stops the server.
-  const oauthToken =
-    understanding.enabled && understanding.oauthTokenFile !== undefined ? readTokenFile(understanding.oauthTokenFile) : undefined;
-
-  const db = openDb(config.dbPath);
-  // Provider secrets set from the web UI are kept beside the config, never in the database.
-  const { Settings } = await import('./server/settings.ts');
-  const { dirname, join } = await import('node:path');
-  const settings = new Settings(db, config, join(dirname(configPath), 'secrets'));
-  let scheduler: Scheduler | null = null;
-  let mergeLlm: MergeLlm | null = null;
-  let removeListeners = () => {};
+  const { dirname } = await import('node:path');
+  const { loadServerConfig } = await import('./server/config.ts');
+  const { startCenter } = await import('./server/center.ts');
+  const center = await startCenter({
+    config: loadServerConfig(configPath),
+    configDir: dirname(configPath),
+    webDir: fileURLToPath(new URL('../dist/web', import.meta.url)),
+    log: line => io.stdout(line + '\n'),
+  });
+  const stopped = Promise.withResolvers<void>();
+  const stop = () => stopped.resolve();
+  process.once('SIGINT', stop);
+  process.once('SIGTERM', stop);
+  io.signal?.addEventListener('abort', stop, { once: true });
   try {
-    if (understanding.enabled) {
-      // The scheduler and the Agent SDK runner are server-only, like the modules above.
-      const { Scheduler } = await import('./understand/scheduler.ts');
-      const { agentSdkRunner } = await import('./understand/agent-sdk.ts');
-      const { defaultDeps } = await import('./domain/types.ts');
-      // Models and the credential are read before each call, so changes in the settings apply without a restart. The
-      // token file named in the config was checked above; the settings fall back to it when nothing else is chosen.
-      const runner = agentSdkRunner({ credential: () => settings.credential() });
-      const jevKeyFile = config.understanding?.jevKeyFile;
-      let decider: Decider | undefined;
-      if (jevKeyFile !== undefined) {
-        const { jevDecider } = await import('./understand/decider.ts');
-        decider = jevDecider({ key: readTokenFile(jevKeyFile), baseUrl: process.env.TYPESAFE_BASE_URL, model: process.env.TYPESAFE_DEFAULT_MODEL });
-        io.stdout('agent-pm server: questions that need no user are decided by TypeSafe Jev\n');
-      }
-      scheduler = new Scheduler(db, defaultDeps(), runner, () => settings.models(), decider);
-      // Merge previews are drafted with the curator's model, on the user's request rather than the scheduler's clock.
-      mergeLlm = { runner, model: () => settings.models().curate };
-      if (settings.credential().mode === 'login' && !process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-        io.stdout(
-          'agent-pm server: no understanding.oauthTokenFile and no CLAUDE_CODE_OAUTH_TOKEN; model calls use this machine\'s Claude Code login\n',
-        );
-      }
-    }
-    // `npm run build:web` writes the web UI here (relative to this file, so it works from any working directory).
-    const webDir = fileURLToPath(new URL('../dist/web', import.meta.url));
-    const app = createApp(db, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm });
-    const feed = new ChangeFeed(db, { status: () => scheduler?.status() ?? disabledStatus() });
-    await new Promise<void>((resolve, reject) => {
-      // No hostname: listen on every interface, so collectors and the CLI can reach it over Tailscale.
-      const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
-        const collectors = Object.keys(config.collectors).length;
-        io.stdout(`agent-pm server: listening on :${info.port} (all interfaces), db ${config.dbPath}, ${collectors} collector(s)\n`);
-        scheduler?.start();
-      });
-      server.once('error', reject);
-      const stream = attachStream(server as Server, feed);
-      // Open WebSockets would keep server.close waiting, so they go first.
-      const stop = () => {
-        stream.close();
-        feed.stop();
-        server.close((err) => (err ? reject(err) : resolve()));
-      };
-      process.once('SIGINT', stop);
-      process.once('SIGTERM', stop);
-      io.signal?.addEventListener('abort', stop, { once: true });
-      removeListeners = () => {
-        process.off('SIGINT', stop);
-        process.off('SIGTERM', stop);
-        io.signal?.removeEventListener('abort', stop);
-      };
-    });
-    return 0;
+    if (!io.signal?.aborted) await stopped.promise;
   } finally {
-    removeListeners();
-    // A model call in flight finishes (and writes its result) before the database goes away.
-    if (scheduler !== null) {
-      if (scheduler.status().running !== null) io.stdout('agent-pm server: waiting for the running model call to finish…\n');
-      await scheduler.stop();
-    }
-    db.close();
+    process.off('SIGINT', stop);
+    process.off('SIGTERM', stop);
+    io.signal?.removeEventListener('abort', stop);
+    await center.stop();
   }
-}
-
-/** The trimmed content of the oauth token file; unreadable or empty is a startup error. */
-function readTokenFile(path: string): string {
-  let token: string;
-  try {
-    token = readFileSync(path, 'utf8').trim();
-  } catch (err) {
-    throw new Error(`cannot read understanding.oauthTokenFile ${path}: ${(err as Error).message}`, { cause: err });
-  }
-  if (token === '') throw new Error(`understanding.oauthTokenFile ${path} is empty`);
-  return token;
+  return 0;
 }
 
 async function runCollect(args: string[], io: Io): Promise<number> {

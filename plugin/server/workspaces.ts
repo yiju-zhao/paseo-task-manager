@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { Workspace } from './protocol/workspace.ts';
+import { Workspace } from '../../src/shared/workspace.ts';
 import { writeFileAtomic } from './collector/state-store.ts';
 import type { repositoryReads } from './route.ts';
 

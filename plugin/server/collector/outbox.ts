@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import type { BatchV2 } from '../protocol/ingest-v2.ts';
+import type { BatchV2 } from '../../../src/shared/ingest-v2.ts';
 import { writeFileAtomic } from './state-store.ts';
 
 /**

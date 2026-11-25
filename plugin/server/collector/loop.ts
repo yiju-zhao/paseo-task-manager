@@ -1,6 +1,6 @@
 import type { HistoryImport } from './history-import.ts';
 import { TimelineUnavailable, type AgentSnapshot } from './sdk.ts';
-import type { AgentObservation, Cursor, SnapshotV2 } from '../protocol/ingest-v2.ts';
+import type { AgentObservation, Cursor, SnapshotV2 } from '../../../src/shared/ingest-v2.ts';
 import { FatalError, RefusedError, RetryableError } from './client.ts';
 import type { CenterClient } from './client.ts';
 import type { PaseoCollectorConfig } from './config.ts';
@@ -9,8 +9,8 @@ import type { Outbox } from './outbox.ts';
 import type { DirectoryEntry, DirectoryUpdate, PaseoSdk, TimelineSignal } from './sdk.ts';
 import type { StateDir } from './state-store.ts';
 import { nextBatch } from './timeline.ts';
-import { WorkspaceCache } from '../protocol/workspace.ts';
-import type { Workspace } from '../protocol/workspace.ts';
+import { WorkspaceCache } from '../../../src/shared/workspace.ts';
+import type { Workspace } from '../../../src/shared/workspace.ts';
 
 // The Paseo collector's run loop. Three things run independently, so a slow or failing one never stalls another:
 //  - the heartbeat: every `heartbeatMs` a snapshot (collector alive, daemon health, the agents as last seen) renews

@@ -2,7 +2,8 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, openSync, closeSync, fsyncSync, linkSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { exclusiveLock } from '../shared/exclusive-lock.ts';
+import type { DatabaseSync } from 'node:sqlite';
 
 // The collector's state directory: who it belongs to, a lock so only one process uses it, and (in ./outbox.ts) the
 // batches not yet acknowledged. Positions are not kept here: the center's committed checkpoint is the only one a
@@ -104,16 +105,10 @@ export class StateDir {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     // This file stays in place. SQLite serializes local owners on macOS and Linux, including stale-marker takeover.
     // An exclusive transaction writes no data. Closing the handle, process death, or reboot releases the OS lock.
-    const guard = new DatabaseSync(join(dir, 'collector-lock.sqlite'));
+    const guard = exclusiveLock(join(dir, 'collector-lock.sqlite'), () => `state directory ${dir} is in use by another Paseo collector`);
     const lock = join(dir, 'collector.lock');
     let published = false;
     try {
-      try {
-        guard.exec('BEGIN EXCLUSIVE');
-      } catch (err) {
-        if ((err as { errcode?: number }).errcode === 5) throw new Error(`state directory ${dir} is in use by another Paseo collector`, { cause: err });
-        throw err;
-      }
       publishMarker(lock);
       published = true;
       const idPath = join(dir, 'identity.json');

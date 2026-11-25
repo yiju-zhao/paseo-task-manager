@@ -7,7 +7,7 @@ import { PaseoCollectorConfig } from '../../server/collector/config.ts';
 import { PaseoCollector } from '../../server/collector/loop.ts';
 import { Outbox } from '../../server/collector/outbox.ts';
 import { StateDir } from '../../server/collector/state-store.ts';
-import { BatchV2, LeaseRequest, SnapshotV2, type Cursor } from '../../server/protocol/ingest-v2.ts';
+import { BatchV2, LeaseRequest, SnapshotV2, type Cursor } from '../../../src/shared/ingest-v2.ts';
 import { FakePaseo, FAKE_SERVER_ID } from '../helpers/fake-paseo.ts';
 
 test('the collector pages, filters reasoning and retries the identical durable batch after an ACK is lost', async () => {
@@ -24,7 +24,7 @@ test('the collector pages, filters reasoning and retries the identical durable b
   const received: BatchV2[] = [];
   const events = new Map<string,string>();
   let loseAck = true;
-  const client = createCenterClient({server:config.server, token:'fixture-token', fetch:async (url, init) => {
+  const client = createCenterClient({server:'http://test.invalid', token:'fixture-token', fetch:async (url, init) => {
     expect(new Headers(init.headers).get('authorization')).toBe('Bearer fixture-token');
     const path = new URL(url).pathname;
     const body = init.body ? JSON.parse(String(init.body)) : null;
@@ -48,7 +48,7 @@ test('the collector pages, filters reasoning and retries the identical durable b
   }});
   const outbox = new Outbox(dir);
   function collector() {
-    return new PaseoCollector(config, {sdk:fake,client,outbox,state:StateDir.open(dir,{sourceId:config.sourceId,serverId:FAKE_SERVER_ID,server:config.server}),
+    return new PaseoCollector(config, {sdk:fake,client,outbox,state:StateDir.open(dir,{sourceId:config.sourceId,serverId:FAKE_SERVER_ID,server:'http://test.invalid'}),
       now:()=>new Date(),workspace:async()=>null,log:()=>{}});
   }
   let current = collector();

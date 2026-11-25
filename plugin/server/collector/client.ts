@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { BatchAck, CheckpointResponse, LeaseResponse, SnapshotV2Response, V2Error } from '../protocol/ingest-v2.ts';
-import type { BatchV2, LeaseRequest, SnapshotV2 } from '../protocol/ingest-v2.ts';
+import { BatchAck, CheckpointResponse, LeaseResponse, SnapshotV2Response, V2Error } from '../../../src/shared/ingest-v2.ts';
+import type { BatchV2, LeaseRequest, SnapshotV2 } from '../../../src/shared/ingest-v2.ts';
 
 /** Worth retrying unchanged later: the center was unreachable, timed out, or answered 408, 429 or 5xx. */
 export class RetryableError extends Error {
