@@ -1,5 +1,6 @@
 import { defineRpc, defineSettings } from '@getpaseo/plugin';
 import { z } from 'zod';
+import { DEFAULT_TOOL_LIMIT } from '../../src/shared/storage.ts';
 
 export const settings = defineSettings({
   id: 'collection',
@@ -8,6 +9,7 @@ export const settings = defineSettings({
   schema: z.object({
     selectedHosts: z.array(z.string().min(1)).default([]),
     readClosed: z.boolean().default(false),
+    toolLimit: z.number().int().positive().default(DEFAULT_TOOL_LIMIT),
   }),
 });
 export type Preferences = z.output<typeof settings.schema>;
@@ -28,4 +30,11 @@ export const centerStatus = defineRpc({
   name: 'center.status',
   input: z.object({ action: z.enum(['retry', 'fresh']).optional() }),
   output: z.object({ configPath: z.string(), running: z.boolean(), reason: z.string(), canStartFresh: z.boolean() }),
+});
+
+export const storageState = defineRpc({
+  name: 'storage.usage',
+  input: z.object({ previewLimit: z.number().int().positive().optional() }),
+  output: z.object({ used: z.number(), limit: z.number(), oldest: z.string().nullable(), blocked: z.boolean(),
+    preview: z.object({ used: z.number(), clearBytes: z.number(), oldest: z.string().nullable() }).optional() }).nullable(),
 });

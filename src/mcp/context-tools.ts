@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+import type { ToolUsage } from '../server/tool-storage.ts';
 import { explicitItem, explicitTurn, type Upstream } from '../context/upstream.ts';
 import { z } from 'zod';
 
@@ -14,7 +15,7 @@ import { defineTool } from './define-tool.ts';
 
 const OVERVIEW_SECTION_CHARS = 330;
 
-export type OverviewSources = { config: SourceConfig; startedAt: Date; upstream?: Upstream };
+export type OverviewSources = { config: SourceConfig; startedAt: Date; upstream?: Upstream; toolUsage?: () => ToolUsage | undefined };
 
 export function searchTool(db: DatabaseSync): ToolDef {
   const defaultLimit = 20;
@@ -125,11 +126,13 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
       () => {
         const now = deps.now();
         const overview = readOverview(db, now, reader, sources);
+        const usage = sources?.toolUsage?.();
         const parts = [
           [
             '盲区',
             [
               `待摘要会话 ${overview.undigested}，拒摘窗口 ${overview.refusals}`,
+              ...(usage ? [`工具详情 ${usage.used}/${usage.limit} 字节，最早保留 ${usage.oldest ?? '无'}${usage.blocked ? '；已处理的详情清完仍超限，请调高上限' : ''}`] : []),
               ...overview.sources.map((s) => `${s.id} · ${s.state} · ${s.last_sync ?? '未同步'}`),
               `${overview.sources.length ? '其余 ' : ''}${overview.healthySources} 个来源正常`,
             ],

@@ -3,6 +3,7 @@ import type { PluginTheme, RpcOutput } from '@getpaseo/plugin';
 import { useEffect, useState } from 'react';
 import { useHosts, usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
+import { StorageSettings } from './storage.tsx';
 import { registerHost } from './register-host.ts';
 import type { HostDirectory } from '@getpaseo/client';
 import { centerStatus, importProgress, settings } from '../shared/settings.ts';
@@ -97,7 +98,7 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
   }, [api, progress]);
   if (prefs.status !== 'ready') return <SettingsRow label={prefs.status === 'loading' ? '读取设置中' : '读取设置失败'} />;
   const { selectedHosts, readClosed } = prefs.values;
-  const setHostsSelected = (ids: string[]) => void prefs.save({ selectedHosts: [...new Set(ids)], readClosed }, prefs.revision);
+  const setHostsSelected = (ids: string[]) => void prefs.save({ ...prefs.values, selectedHosts: [...new Set(ids)] }, prefs.revision);
   const known = hosts ? [hosts.self, ...hosts.hosts] : [];
   function openForm(label: string) {
     setError('');
@@ -117,6 +118,8 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
   const ids = known.flatMap(h => h.serverId ? [h.serverId] : []);
   return <>
     <DatabaseSettings />
+    <StorageSettings key={prefs.values.toolLimit} limit={prefs.values.toolLimit} saving={prefs.saving}
+      save={toolLimit => void prefs.save({ ...prefs.values, toolLimit }, prefs.revision)} />
     <SettingsSection title="采集机器">
       {error && <SettingsRow label={error} />}
       <SettingsSwitch label="全选" disabled={prefs.saving || !ids.length} value={!!ids.length && ids.every(id => selectedHosts.includes(id))}
@@ -139,7 +142,7 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
     </SettingsSection>
     <SettingsSection title="会话内容">
       <SettingsSwitch label="读取已关闭和已归档 session 的内容" hint={description} disabled={prefs.saving} value={readClosed}
-        onValueChange={value => void prefs.save({ selectedHosts, readClosed: value }, prefs.revision)} />
+        onValueChange={value => void prefs.save({ ...prefs.values, readClosed: value }, prefs.revision)} />
       {readClosed && <HistoryProgress selected={selectedHosts} theme={theme} />}
       {prefs.saveError && <SettingsRow label={prefs.saveError} />}
     </SettingsSection>

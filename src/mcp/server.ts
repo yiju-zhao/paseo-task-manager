@@ -1,3 +1,4 @@
+import type { ToolUsage } from '../server/tool-storage.ts';
 import type { Upstream } from '../context/upstream.ts';
 import manifest from '../../package.json' with { type: 'json' };
 import type { DatabaseSync } from 'node:sqlite';
@@ -26,7 +27,7 @@ const VERSION = manifest.version;
  * session and nothing for the server to push, so GET (the event stream) and DELETE (session end) answer 405, which
  * clients take as "no stream here".
  */
-export function mountMcp(app: Hono, db: DatabaseSync, config: ServerConfig, deps: DomainDeps, upstream?: Upstream): void {
+export function mountMcp(app: Hono, db: DatabaseSync, config: ServerConfig, deps: DomainDeps, upstream?: Upstream, toolUsage?: () => ToolUsage | undefined): void {
   const startedAt = deps.now();
   const limitBody = bodyLimit({
     maxSize: MAX_BODY_BYTES,
@@ -39,7 +40,7 @@ export function mountMcp(app: Hono, db: DatabaseSync, config: ServerConfig, deps
       return c.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed.' }, id: null }, 405);
     }
     const server = new McpServer({ name: 'agent-pm', version: VERSION });
-    for (const tool of readTools(db, deps, c.get('keyPrincipal').id, { config, startedAt, upstream })) {
+    for (const tool of readTools(db, deps, c.get('keyPrincipal').id, { config, startedAt, upstream, toolUsage })) {
       server.registerTool(tool.name, { description: tool.description, inputSchema: tool.input }, async (args) => {
         const out = await tool.handler(args);
         return { content: [{ type: 'text', text: out.text }], isError: out.isError };

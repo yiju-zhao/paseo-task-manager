@@ -6,6 +6,7 @@ import { HistoryImport } from './collector/history-import.ts';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
 import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
+import { ToolStorage } from '../../src/server/tool-storage.ts';
 import { selectSource } from './sources.ts';
 import { inProcessClient } from './in-process.ts';
 
@@ -17,7 +18,7 @@ import { agentReads, isLoaded } from './collector/sdk.ts';
 import { StateDir } from './collector/state-store.ts';
 import { pluginPaths } from './config.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
-import { centerStatus, importProgress, settings, type Preferences } from '../shared/settings.ts';
+import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
 import { RemoteWorkspaces, type UnknownFileCount } from './workspaces.ts';
 
 declare const CHECKOUT_WEB_DIR: string;
@@ -30,7 +31,12 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   const workers = new Map<string, PaseoCollector>();
   const ledgers = new Map<string, HistoryImport>();
   const unknownFiles = new Map<string, Map<string, UnknownFileCount>>();
-  let prefs: Preferences = { selectedHosts: [], readClosed: false };
+  let prefs: Preferences = settings.schema.parse({});
+  let settingsReady = false;
+  let storage: ToolStorage | undefined;
+  function enforceLimit() {
+    if (settingsReady && !stopped) void storage?.schedule(prefs.toolLimit).catch(err => console.error('工具详情清理失败', String(err)));
+  }
   let stopped = false;
   let pending = false;
   let current: Promise<void> | undefined;
@@ -51,8 +57,10 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     if (center || stopped) return;
     starting ??= (async () => {
       config = Object.assign(pluginConfig(cfg), { selectedPaseoHosts: () => prefs.selectedHosts });
-      center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream,
+      center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream, afterBatch: enforceLimit, toolUsage: () => storage?.status(),
         openDatabase: path => openPluginDatabase(cfg, path, fresh) });
+      storage = new ToolStorage(center.db);
+      enforceLimit();
       reason = '';
       canStartFresh = false;
     })().catch(err => {
@@ -63,6 +71,11 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     return starting;
   }
   void boot();
+  server.handle(storageState, async ({ previewLimit }) => {
+    if (!storage || !settingsReady) return null;
+    const preview = previewLimit === undefined ? undefined : await storage.preview(previewLimit);
+    return { ...storage.status(), preview };
+  });
   server.handle(centerStatus, async ({ action }) => {
     if (action === 'retry' || (action === 'fresh' && canStartFresh)) await boot(action === 'fresh');
     return { configPath: cfg.configPath, running: Boolean(center), reason, canStartFresh };
@@ -86,7 +99,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
       const remote = serverId === cfg.daemonServerId ? null : new RemoteWorkspaces(repository, config.stateDir);
       if (remote) unknownFiles.set(serverId, remote.unknownCounts);
       worker = new PaseoCollector(config, {
-        state, sdk, client: inProcessClient(center.db, source), outbox: new Outbox(config.stateDir),
+        state, sdk, client: inProcessClient(center.db, source, undefined, enforceLimit), outbox: new Outbox(config.stateDir),
         now: () => new Date(), log,
         history: { ledger, enabled: () => selected(serverId) && prefs.readClosed },
         readContent: agent => selected(serverId) && (prefs.readClosed || isLoaded(agent)),
@@ -167,7 +180,10 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
 
   let settingsChanged = false;
   function apply(state: Awaited<ReturnType<typeof stored.read>>) {
-    prefs = state.status === 'ready' ? state.values : { selectedHosts: [], readClosed: false };
+    const prior = settingsReady ? prefs.toolLimit : undefined;
+    settingsReady = state.status === 'ready';
+    prefs = state.status === 'ready' ? state.values : settings.schema.parse({});
+    if (prior !== prefs.toolLimit) enforceLimit();
     refresh();
   }
   const unsubscribe = stored.subscribe(state => { settingsChanged = true; apply(state); });
@@ -182,6 +198,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     finally {
       await local.close();
       await starting;
+      await storage?.stop();
       await center?.stop();
     }
   };

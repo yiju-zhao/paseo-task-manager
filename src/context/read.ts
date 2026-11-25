@@ -253,7 +253,7 @@ export function readTurn(db: DatabaseSync, shortId: string, turn: number, backgr
       const meta: EventMeta = isHidden ? {} : JSON.parse(r.meta ?? '{}');
       const tool = meta.tool;
       return {
-        ...(meta.detail_cleared_at ? { cleared: true } : {}),
+        ...(meta.detail_cleared_at ? { cleared: true, detail: '中心已清除这段详情' } : {}),
         address: address + '.' + (i + 1),
         kind: r.kind,
         refused: !!r.refused,

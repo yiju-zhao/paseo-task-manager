@@ -31,7 +31,7 @@ function setup() {
 }
 
 test('settings start with no hosts selected and closed content disabled', () => {
-  expect(settings.schema.parse({})).toEqual({selectedHosts:[],readClosed:false});
+  expect(settings.schema.parse({})).toEqual({ selectedHosts: [], readClosed: false, toolLimit: 2 * 1024 ** 3 });
 });
 
 test('only read and lifecycle methods escape; SDK calls stay on the allowlist', async () => {

@@ -50,7 +50,7 @@ function refused(c: Context, err: unknown): Response {
   throw err;
 }
 
-export function mountIngestV2(app: Hono, db: DatabaseSync, config: ServerConfig, clock: () => Date): void {
+export function mountIngestV2(app: Hono, db: DatabaseSync, config: ServerConfig, clock: () => Date, afterBatch?: () => void): void {
   const limit = bodyLimit({
     maxSize: MAX_V2_BODY_BYTES,
     onError: (c) => c.json(errorBody('too_large', `request body exceeds ${MAX_V2_BODY_BYTES} bytes`), 413),
@@ -97,7 +97,9 @@ export function mountIngestV2(app: Hono, db: DatabaseSync, config: ServerConfig,
     const read = await readBody(c, src, BatchV2);
     if (read instanceof Response) return read;
     try {
-      return c.json(commitBatch(db, src, read.body, bodyHash(read.raw), clock()));
+      const ack = commitBatch(db, src, read.body, bodyHash(read.raw), clock());
+      afterBatch?.();
+      return c.json(ack);
     } catch (err) {
       return refused(c, err);
     }

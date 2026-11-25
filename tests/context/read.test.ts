@@ -181,7 +181,7 @@ test('Explicit retrieval reads only evicted detail and leaves the stored event e
   const upstream = async () => { calls++; return { text: 'upstream original' }; };
   expect((await explicitItem(center.db, short, 1, 1, 0, upstream)).text).toContain(input);
   expect(calls).toBe(0);
-  center.db.exec("UPDATE source_events SET meta=json_set(meta, '$.detail_cleared_at', 'fixture', '$.input_preview', 'shell', '$.tool.input', NULL, '$.tool.output', NULL, '$.tool.error', NULL)");
+  center.db.exec("UPDATE source_events SET meta=json_set(meta, '$.detail_cleared_at', 'fixture', '$.input_preview', 'shell', '$.tool.input', '', '$.tool.output', '', '$.tool.error', NULL)");
   expect((await explicitItem(center.db, short, 1, 1, 0, upstream)).text).toBe('upstream original');
   expect(calls).toBe(1);
   expect(readTurn(center.db, short, 1, true).items[0].tool?.input).toBe('shell');
@@ -204,4 +204,14 @@ test('An upstream timeout reports the retained tool summary.', async () => {
   const result = await explicitItem(center.db, short, 1, 1, 0, async () => new Promise(() => {}), AbortSignal.timeout(10));
   expect(result.text).toContain('读取超时');
   expect(result.text).toContain('build');
+});
+
+test('A tool with empty original output and no eviction marker never reads upstream.', async () => {
+  await deliver([{ ...tool, tool: { ...tool.tool!, input: '', output: '', error: null } }]);
+  const { explicitItem } = await import('../../src/context/upstream.ts');
+  const raw = await explicitItem(center.db, short, 1, 1, 0, async () => { throw new Error('unexpected upstream call'); });
+  expect(raw.missing).toBe(false);
+  expect(raw.cleared).toBeNull();
+  expect(raw.text).toBe('');
+  expect(readTurn(center.db, short, 1).items[0].cleared).toBeUndefined();
 });

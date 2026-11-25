@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { acquireLease, applyPaseoSnapshot, bodyHash, commitBatch, getCheckpoint, IngestError, type PaseoSource } from '../../src/server/ingest-repo.ts';
 import { RefusedError, FatalError, type CenterClient } from './collector/client.ts';
 
-export function inProcessClient(db: DatabaseSync, source: PaseoSource, now = () => new Date()): CenterClient {
+export function inProcessClient(db: DatabaseSync, source: PaseoSource, now = () => new Date(), afterBatch?: () => void): CenterClient {
   async function submit<T>(sourceId: string, write: () => T): Promise<T> {
     if (sourceId !== source.sourceId) throw new FatalError('source identity mismatch');
     try {
@@ -21,7 +21,11 @@ export function inProcessClient(db: DatabaseSync, source: PaseoSource, now = () 
       if (body.daemon.server_id && body.daemon.server_id !== source.serverId) throw new FatalError('identity_mismatch');
       return applyPaseoSnapshot(db, source, body, now());
     }),
-    batch: body => submit(body.source_id, () => commitBatch(db, source, body, bodyHash(body), now())),
+    batch: body => submit(body.source_id, () => {
+      const ack = commitBatch(db, source, body, bodyHash(body), now());
+      afterBatch?.();
+      return ack;
+    }),
     checkpoint: async id => getCheckpoint(db, source, id),
   };
 }

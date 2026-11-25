@@ -24,6 +24,8 @@ export type CenterOptions = {
   log: (line: string) => void;
   runner?: LlmRunner;
   upstream?: AppOptions['upstream'];
+  toolUsage?: AppOptions['toolUsage'];
+  afterBatch?: () => void;
   openDatabase?: typeof openDb;
 };
 
@@ -40,7 +42,7 @@ function readTokenFile(path: string): string {
   return token;
 }
 
-export async function startCenter({ config, configDir, webDir, log, runner, upstream, openDatabase = openDb }: CenterOptions): Promise<RunningCenter> {
+export async function startCenter({ config, configDir, webDir, log, runner, upstream, toolUsage, afterBatch, openDatabase = openDb }: CenterOptions): Promise<RunningCenter> {
   const understanding = understandingSettings(config);
   if (understanding.enabled && understanding.oauthTokenFile) readTokenFile(understanding.oauthTokenFile);
   let guard: DatabaseSync | undefined;
@@ -69,7 +71,7 @@ export async function startCenter({ config, configDir, webDir, log, runner, upst
         log("agent-pm server: no understanding.oauthTokenFile and no CLAUDE_CODE_OAUTH_TOKEN; model calls use this machine's Claude Code login");
       }
     }
-    const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm, upstream });
+    const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm, upstream, toolUsage, afterBatch });
     const feed = new ChangeFeed(database, { status: () => scheduler?.status() ?? disabledStatus() });
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.listen });
     const stream = attachStream(server as Server, feed);

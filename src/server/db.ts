@@ -620,6 +620,25 @@ CREATE TRIGGER index_turn_items_insert AFTER INSERT ON turn_items BEGIN INSERT I
    DROP TRIGGER invalidate_check_blockers;
    DROP TRIGGER invalidate_check_todos;
    DROP TRIGGER invalidate_check_milestones;`,
+  `ALTER TABLE source_events ADD COLUMN detail_bytes INTEGER GENERATED ALWAYS AS (
+    CASE WHEN kind='tool' THEN
+      coalesce(length(CAST(json_extract(meta,'$.tool.input') AS BLOB)),0) +
+      coalesce(length(CAST(json_extract(meta,'$.tool.output') AS BLOB)),0) +
+      coalesce(length(CAST(json_extract(meta,'$.tool.error') AS BLOB)),0)
+    ELSE 0 END
+  ) VIRTUAL;
+  CREATE INDEX retained_tool_details ON source_events(coalesce(ts,received_at,''), id, detail_bytes) WHERE detail_bytes>0;
+  CREATE TABLE tool_detail_usage (id INTEGER PRIMARY KEY CHECK(id=1), used INTEGER NOT NULL);
+  INSERT INTO tool_detail_usage SELECT 1, coalesce(sum(detail_bytes),0) FROM source_events WHERE detail_bytes>0;
+  CREATE TRIGGER tool_usage_insert AFTER INSERT ON source_events WHEN NEW.detail_bytes>0 BEGIN
+    UPDATE tool_detail_usage SET used=used+NEW.detail_bytes;
+  END;
+  CREATE TRIGGER tool_usage_update AFTER UPDATE OF meta,kind ON source_events WHEN NEW.detail_bytes<>OLD.detail_bytes BEGIN
+    UPDATE tool_detail_usage SET used=used+NEW.detail_bytes-OLD.detail_bytes;
+  END;
+  CREATE TRIGGER tool_usage_delete AFTER DELETE ON source_events WHEN OLD.detail_bytes>0 BEGIN
+    UPDATE tool_detail_usage SET used=used-OLD.detail_bytes;
+  END;`,
 ];
 
 /** Opens (creating if needed) the central database in WAL mode and applies pending migrations. */

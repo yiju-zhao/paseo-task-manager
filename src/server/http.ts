@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import type { ZodType } from 'zod';
+import type { ToolUsage } from './tool-storage.ts';
 import { explicitTurn, type Upstream } from '../context/upstream.ts';
 import { getActivity, MAX_ACTIVITY_DAYS } from '../domain/activity.ts';
 import { listReminders, snoozeReminder } from '../domain/reminders.ts';
@@ -102,7 +103,7 @@ export function createApp(
     return c.json(body);
   });
 
-  mountIngestV2(app, db, config, clock);
+  mountIngestV2(app, db, config, clock, opts.afterBatch);
 
   app.get('/sessions', (c) => {
     const sessions = listSessions(
@@ -160,7 +161,7 @@ export function createApp(
   mountDomainRoutes(app, db, config, deps, () => scheduler?.requestProjectReview?.());
   mountMergeRoutes(app, db, deps, userAuth(config, db, clock), opts.mergeLlm ?? null, () => scheduler?.requestProjectReview?.());
   mountAdminRoutes(app, db, config, deps, opts.settings ?? new Settings(db, config, null, clock));
-  mountMcp(app, db, config, deps, opts.upstream);
+  mountMcp(app, db, config, deps, opts.upstream, opts.toolUsage);
   mountWeb(app, opts.webDir ?? null);
 
   return app;
@@ -173,7 +174,7 @@ export type SessionListItem = SessionView & { linked_projects: Array<{ id: strin
  * `settings`: the run-time settings (models, provider credential); without one, secrets cannot be set from the UI.
  * `mergeLlm`: the model that drafts merge previews; without one, previews answer `understanding_disabled`.
  */
-export type AppOptions = { upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
+export type AppOptions = { afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
 
 /**
  * Authenticates an ingest request, then reads and validates its JSON body. Order: bearer token
