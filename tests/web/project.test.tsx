@@ -1,0 +1,542 @@
+// @vitest-environment jsdom
+import type { ActivityView } from '../../src/domain/activity.ts';
+import { activity, item, projectActivity } from './console-fixtures.ts';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeAll, beforeEach, expect, test, vi } from 'vitest';
+import type { ProjectCard, ProjectDetail, QuestionView } from '../../src/domain/read.ts';
+import { setToken } from '../../web/src/api.ts';
+import { ToastProvider } from '../../web/src/components/toast.tsx';
+import { ProjectPage } from '../../web/src/pages/project.tsx';
+import type { Topic } from '../../web/src/stream.ts';
+import { StreamContext } from '../../web/src/use-api.ts';
+import { shortTime } from '../../web/src/format.ts';
+import { blocker, card, contribution, decision, detail, eventView, milestone, question, tag, todo } from './fixtures.ts';
+
+const fetchMock = vi.fn<typeof fetch>();
+let listeners: Set<(topics: Topic[]) => void> = new Set();
+
+const stream = {
+  subscribe(fn: (topics: Topic[]) => void) {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  },
+};
+
+function emit(...topics: Topic[]): void {
+  act(() => {
+    for (const fn of [...listeners]) fn(topics);
+  });
+}
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+const applied = () => json({ status: 'applied', event_id: 7, question_ids: [], warnings: [] });
+
+let project: ProjectDetail | null;
+let projects: ProjectCard[];
+/** What `/activity` answers for this project; null: nothing (the status band then shows only the record's numbers). */
+let pulse: ActivityView | null = null;
+let pending: QuestionView[];
+/** What a write answers with, by `METHOD /path`; anything not listed is applied. */
+let writes: Record<string, () => Response>;
+
+function serve(): void {
+  fetchMock.mockImplementation(async (input, init) => {
+    const path = String(input);
+    const route = `${init?.method ?? 'GET'} ${path}`;
+    if (route === 'GET /projects/p_1') return project === null ? json({ error: 'not_found', message: 'project p_1 not found' }, 404) : json(project);
+    if (route === 'GET /projects') return json(projects);
+    if (route === 'GET /questions?status=pending&project_id=p_1') return json(pending);
+    if (pulse !== null && path.startsWith('/activity?days=30&tz=') && path.endsWith('&project=p_1')) return json(pulse);
+    if (init?.method !== undefined && init.method !== 'GET') return (writes[route] ?? applied)();
+    return json({ error: 'not_found', message: route }, 404);
+  });
+}
+
+const reads = (path: string) => fetchMock.mock.calls.filter(([input, init]) => String(input) === path && (init?.method ?? 'GET') === 'GET').length;
+const writesMade = () =>
+  fetchMock.mock.calls
+    .filter(([, init]) => init?.method !== undefined && init.method !== 'GET')
+    .map(([url, init]) => ({ url: String(url), method: init?.method, body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined }));
+
+async function renderPage(id = 'p_1') {
+  const view = render(
+    <StreamContext.Provider value={stream}>
+      <ToastProvider>
+        <ProjectPage id={id} />
+      </ToastProvider>
+    </StreamContext.Provider>,
+  );
+  await waitFor(() => expect(screen.queryByText('加载中…')).toBeNull());
+  return view;
+}
+
+const region = (name: string) => screen.getByRole('region', { name });
+
+beforeAll(() => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+});
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal('fetch', fetchMock);
+  localStorage.clear();
+  setToken('tok-1');
+  listeners = new Set();
+  project = detail({ created_at: '2026-10-02T12:00:00.000Z' });
+  projects = [card({ id: 'p_1' }), card({ id: 'p_2', title: 'loopwm' })];
+  pending = [];
+  writes = {};
+  serve();
+});
+
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+test('shows 加载中… until the project has arrived', async () => {
+  render(
+    <StreamContext.Provider value={stream}>
+      <ToastProvider>
+        <ProjectPage id="p_1" />
+      </ToastProvider>
+    </StreamContext.Provider>,
+  );
+  expect(screen.getByText('加载中…')).toBeTruthy();
+  await waitFor(() => expect(screen.queryByText('加载中…')).toBeNull());
+  expect(screen.getByRole('button', { name: 'dLLM 评测框架' })).toBeTruthy();
+});
+
+test('a project that does not exist says so and links back to the home page', async () => {
+  project = null;
+  await renderPage();
+  expect(screen.getByText('项目不存在或已删除')).toBeTruthy();
+  expect(screen.getByRole('link', { name: '回首页' }).getAttribute('href')).toBe('#/');
+  expect(screen.queryByRole('region', { name: '里程碑' })).toBeNull();
+});
+
+test('the page element names the project, also while it is missing', async () => {
+  project = null;
+  await renderPage();
+  expect(document.querySelector('main[data-page="project"]')?.getAttribute('data-project-id')).toBe('p_1');
+});
+
+test('any other failed read shows the reason and a retry that reads again', async () => {
+  fetchMock.mockImplementation(async (input) => (String(input) === '/projects/p_1' ? new Response('down', { status: 500 }) : json([])));
+  render(
+    <StreamContext.Provider value={stream}>
+      <ToastProvider>
+        <ProjectPage id="p_1" />
+      </ToastProvider>
+    </StreamContext.Provider>,
+  );
+  const retry = await screen.findByRole('button', { name: '重试' });
+  expect(screen.getByRole('alert').textContent).toContain('服务器返回了错误');
+  expect(screen.queryByText('项目不存在或已删除')).toBeNull();
+
+  serve();
+  fireEvent.click(retry);
+  expect(await screen.findByRole('button', { name: 'dLLM 评测框架' })).toBeTruthy();
+});
+
+test('a merged project has a banner linking to the project it went into', async () => {
+  project = detail({ stage: 'merged', merged_into: 'p_2' });
+  await renderPage();
+  const banner = screen.getByText(/已合并到/).closest('div') as HTMLElement;
+  expect(banner.textContent).toBe('已合并到 loopwm');
+  expect(within(banner).getByRole('link', { name: 'loopwm' }).getAttribute('href')).toBe('#/p/p_2');
+});
+
+test('if the project it was merged into is not in the list, the banner links with its id', async () => {
+  project = detail({ stage: 'merged', merged_into: 'p_9' });
+  await renderPage();
+  expect(screen.getByRole('link', { name: 'p_9' }).getAttribute('href')).toBe('#/p/p_9');
+});
+
+test('a project that is not merged has no banner', async () => {
+  await renderPage();
+  expect(screen.queryByText(/已合并到/)).toBeNull();
+});
+
+test('the header has priority, title, stage, and when it was created and last active', async () => {
+  project = detail({ priority: 'P1', stage: 'verify', last_activity_at: new Date(Date.now() - 2 * 3600_000).toISOString() });
+  await renderPage();
+  expect((screen.getByRole('combobox', { name: '优先级' }) as HTMLSelectElement).value).toBe('P1');
+  expect(screen.getByRole('button', { name: 'dLLM 评测框架' })).toBeTruthy();
+  expect((screen.getByRole('combobox', { name: '阶段' }) as HTMLSelectElement).value).toBe('verify');
+  expect(screen.getByText('创建于 10/02 · 最近活动 2 小时前')).toBeTruthy();
+});
+
+test('a project without priority shows 未定 in the menu', async () => {
+  project = detail({ priority: null });
+  await renderPage();
+  const menu = screen.getByRole('combobox', { name: '优先级' }) as HTMLSelectElement;
+  expect(menu.value).toBe('');
+  expect(within(menu).getAllByRole('option').map((o) => o.textContent)).toEqual(['未定', 'P0 · 最高', 'P1 · 高', 'P2 · 中', 'P3 · 低']);
+});
+
+test('picking a priority sends it; 未定 sends null; the page reads the project again', async () => {
+  project = detail({ priority: 'P0' });
+  await renderPage();
+  const before = reads('/projects/p_1');
+  fireEvent.change(screen.getByRole('combobox', { name: '优先级' }), { target: { value: 'P2' } });
+  await waitFor(() => expect(reads('/projects/p_1')).toBe(before + 1));
+  fireEvent.change(screen.getByRole('combobox', { name: '优先级' }), { target: { value: '' } });
+  await waitFor(() => expect(reads('/projects/p_1')).toBe(before + 2));
+  expect(writesMade()).toEqual([
+    { url: '/projects/p_1', method: 'PATCH', body: { priority: 'P2' } },
+    { url: '/projects/p_1', method: 'PATCH', body: { priority: null } },
+  ]);
+});
+
+test('the title is edited in place', async () => {
+  await renderPage();
+  const head = region('项目概览');
+  fireEvent.click(within(head).getByRole('button', { name: 'dLLM 评测框架' }));
+  fireEvent.change(within(head).getByRole('textbox'), { target: { value: '新名字' } });
+  fireEvent.keyDown(within(head).getByRole('textbox'), { key: 'Enter' });
+  await waitFor(() => expect(writesMade()).toHaveLength(1));
+  expect(writesMade()[0]).toEqual({ url: '/projects/p_1', method: 'PATCH', body: { title: '新名字' } });
+});
+
+test('big picture: 是什么, 为什么, 做完的标准, each with （还没有） while empty', async () => {
+  project = detail({ summary: '给 Diffusion LLM 做评测', why: null, done_criteria: null });
+  await renderPage();
+  expect(within(region('是什么')).getByText('给 Diffusion LLM 做评测')).toBeTruthy();
+  expect(within(region('为什么')).getByText('（还没有）')).toBeTruthy();
+  expect(within(region('做完的标准')).getByText('（还没有）')).toBeTruthy();
+});
+
+test('saving 为什么 sends PATCH {why}, then the page shows what the server now has', async () => {
+  await renderPage();
+  const why = region('为什么');
+  fireEvent.click(within(why).getByText('（还没有）'));
+  fireEvent.change(within(why).getByRole('textbox'), { target: { value: '评测口径不统一' } });
+  project = detail({ why: '评测口径不统一', locks: ['why'], created_at: '2026-10-02T12:00:00.000Z' });
+  fireEvent.keyDown(within(why).getByRole('textbox'), { key: 'Enter', metaKey: true });
+  await waitFor(() => expect(within(region('为什么')).getByText('评测口径不统一')).toBeTruthy());
+  expect(writesMade()).toEqual([{ url: '/projects/p_1', method: 'PATCH', body: { why: '评测口径不统一' } }]);
+});
+
+test('the same for 是什么', async () => {
+  project = detail({ summary: '旧', done_criteria: '旧标准', locks: ['summary', 'done_criteria'] });
+  await renderPage();
+  fireEvent.click(within(region('是什么')).getByText('旧'));
+  fireEvent.change(within(region('是什么')).getByRole('textbox'), { target: { value: '新' } });
+  fireEvent.keyDown(within(region('是什么')).getByRole('textbox'), { key: 'Enter', ctrlKey: true });
+  await waitFor(() => expect(writesMade()).toHaveLength(1));
+  expect(writesMade().map((w) => `${w.method} ${w.url} ${JSON.stringify(w.body ?? null)}`)).toEqual(['PATCH /projects/p_1 {"summary":"新"}']);
+});
+
+test('the page never says who set a value: no lock, no 解锁 and no AI mark, whatever is locked', async () => {
+  project = detail({ priority: 'P2', locks: ['priority', 'title', 'summary', 'why', 'done_criteria'] });
+  await renderPage();
+  expect(screen.queryByText(/解锁|AI 预填|你定的/)).toBeNull();
+  expect(screen.queryByText('🔒')).toBeNull();
+});
+
+test('a refusal (409) is told in a toast, and the field stays open with the text', async () => {
+  writes['PATCH /projects/p_1'] = () => json({ error: 'merged', message: 'project p_1 was merged into p_2' }, 409);
+  await renderPage();
+  const why = region('为什么');
+  fireEvent.click(within(why).getByText('（还没有）'));
+  fireEvent.change(within(why).getByRole('textbox'), { target: { value: '想写的' } });
+  fireEvent.keyDown(within(why).getByRole('textbox'), { key: 'Enter', metaKey: true });
+  // The note beside the field, and the toast.
+  expect(await within(why).findByText('项目已合并到别的项目')).toBeTruthy();
+  expect(screen.getAllByText('项目已合并到别的项目')).toHaveLength(2);
+  expect((within(why).getByRole('textbox') as HTMLTextAreaElement).value).toBe('想写的');
+});
+
+test('a refusal the page has no wording for shows the server’s own message', async () => {
+  writes['PATCH /projects/p_1'] = () => json({ error: 'something_new', message: '服务器说：现在不行' }, 409);
+  await renderPage();
+  fireEvent.change(screen.getByRole('combobox', { name: '优先级' }), { target: { value: 'P3' } });
+  expect(await screen.findByText('服务器说：现在不行')).toBeTruthy();
+});
+
+test('the project’s pending questions are asked for by project and shown as cards', async () => {
+  pending = [question({ id: 'q_1', prompt: '这个项目可以收尾了吗？' }), question({ id: 'q_2', prompt: '要不要合并？' })];
+  await renderPage();
+  expect(screen.getByText('这个项目可以收尾了吗？')).toBeTruthy();
+  expect(screen.getByText('要不要合并？')).toBeTruthy();
+  expect(region('待你回答 · 2')).toBeTruthy();
+});
+
+test('answering a question reads the project and the questions again', async () => {
+  pending = [question({ id: 'q_1' })];
+  await renderPage();
+  const projectReads = reads('/projects/p_1');
+  const questionReads = reads('/questions?status=pending&project_id=p_1');
+  pending = [];
+  fireEvent.click(screen.getByRole('button', { name: '公开 v2' }));
+  await waitFor(() => expect(screen.queryByText('评测集用哪个？')).toBeNull());
+  expect(reads('/projects/p_1')).toBe(projectReads + 1);
+  expect(reads('/questions?status=pending&project_id=p_1')).toBe(questionReads + 1);
+});
+
+test('without pending questions there is no such section', async () => {
+  await renderPage();
+  expect(screen.queryByText(/待你回答/)).toBeNull();
+});
+
+test('milestones, todos, blockers and decisions are all on the page', async () => {
+  project = detail({
+    milestones: [milestone({ id: 'm_1', title: '接入数据' })],
+    todos: [todo({ id: 't_1', title: '写加载器', milestone_id: 'm_1' })],
+    blockers: [blocker({ id: 'b_1', text: '显存不够' })],
+    decisions: [decision({ id: 'd_1', text: '先用公开 v2', evidence: ['digest:3'] })],
+  });
+  await renderPage();
+  expect(within(region('里程碑')).getByText('接入数据')).toBeTruthy();
+  expect(within(region('Todo')).getByText('写加载器')).toBeTruthy();
+  expect(within(region('阻塞')).getByText('显存不够')).toBeTruthy();
+  expect(within(region('决策')).getByRole('button', { name: '摘要 #3' })).toBeTruthy();
+});
+
+test('a todo that points to a deleted milestone is still on the page, under 未分组', async () => {
+  project = detail({ milestones: [], todos: [todo({ title: '孤儿 todo', milestone_id: 'm_deleted' })] });
+  await renderPage();
+  expect(within(screen.getByRole('group', { name: '未分组' })).getByText('孤儿 todo')).toBeTruthy();
+});
+
+test('the stage menu offers the other projects as merge targets, not the project itself', async () => {
+  await renderPage();
+  fireEvent.change(screen.getByRole('combobox', { name: '阶段' }), { target: { value: 'merged' } });
+  const target = screen.getByRole('combobox', { name: '合并到' });
+  expect(within(target).getAllByRole('option').map((o) => o.textContent)).toEqual(['合并到哪个项目…', 'loopwm']);
+  // Choosing a target merges nothing yet: the dialog goes on to the scope and the preview.
+  fireEvent.change(target, { target: { value: 'p_2' } });
+  expect(screen.getByRole('button', { name: '生成预览' })).toBeTruthy();
+  expect(writesMade()).toHaveLength(0);
+});
+
+test('deleted items are folded under 已删除的条目（n）, with what they were and when', async () => {
+  project = detail({
+    tombstones: [
+      { table: 'todos', id: 't_9', label: '重写调度器', deleted_at: '2026-10-25T12:00:00.000Z' },
+      { table: 'milestones', id: 'm_9', label: '上线', deleted_at: '2026-10-24T12:00:00.000Z' },
+    ],
+  });
+  await renderPage();
+  expect(screen.queryByText('重写调度器 · 10/25')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /已删除的条目（2）/ }));
+  expect(screen.getByText('这些是你删掉的，AI 不会再把它们加回来')).toBeTruthy();
+  expect(screen.getByText('重写调度器 · 10/25')).toBeTruthy();
+  expect(screen.getByText('上线 · 10/24')).toBeTruthy();
+});
+
+test('with nothing deleted there is no such fold', async () => {
+  await renderPage();
+  expect(screen.queryByRole('button', { name: /已删除的条目/ })).toBeNull();
+});
+
+test('the timeline of the sessions that took part is on the page', async () => {
+  project = detail({
+    created_at: '2026-10-26T12:00:00.000Z',
+    contributions: [contribution({ summary: '接入数据', session: tag({ effective_status: 'ended' }) })],
+  });
+  await renderPage();
+  expect(within(region('参与过的 session · 1')).getByText('gx10-090e · claude · 接入数据（已结束）')).toBeTruthy();
+});
+
+test('a contribution of a session that was purged is a bar, not an error', async () => {
+  project = detail({ contributions: [contribution({ session_key: 'claude:0123456789', session: null })] });
+  await renderPage();
+  expect(within(region('参与过的 session · 1')).getByText('session 01234567（已清除）')).toBeTruthy();
+});
+
+test('the event log is on the page, newest first as the server sent them', async () => {
+  project = detail({ events: [eventView({ id: 9, op: 'transition_stage' }), eventView({ id: 8, op: 'update_project' })] });
+  await renderPage();
+  const log = region('事件日志');
+  expect(within(log).getByText('改阶段')).toBeTruthy();
+  expect(Array.from(log.querySelectorAll('li[id^="event-"]')).map((li) => li.id)).toEqual(['event-9', 'event-8']);
+});
+
+test('the timeline and the event log are below the two columns, and the deleted items fold is the last thing on the page', async () => {
+  project = detail({
+    contributions: [contribution()],
+    events: [eventView({ id: 1 })],
+    tombstones: [{ table: 'todos', id: 't_9', label: '重写调度器', deleted_at: '2026-10-25T12:00:00.000Z' }],
+  });
+  await renderPage();
+  const cols = document.querySelector('.cols') as HTMLElement;
+  const timeline = region('参与过的 session · 1');
+  const log = region('事件日志');
+  const fold = screen.getByRole('button', { name: /已删除的条目（1）/ }).closest('section') as HTMLElement;
+  const before = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+  expect(before(cols, timeline)).toBe(true);
+  expect(before(timeline, log)).toBe(true);
+  expect(before(log, fold)).toBe(true);
+  expect(cols.contains(fold)).toBe(false);
+  expect(fold.parentElement?.lastElementChild).toBe(fold);
+});
+
+test('reverting an event posts it and reads the project again', async () => {
+  project = detail({ events: [eventView({ id: 7 })] });
+  await renderPage();
+  const before = reads('/projects/p_1');
+  fireEvent.click(within(region('事件日志')).getByRole('button', { name: '撤销' }));
+  fireEvent.click(within(region('事件日志')).getByRole('button', { name: '确定撤销？' }));
+  await waitFor(() => expect(reads('/projects/p_1')).toBe(before + 1));
+  expect(writesMade()).toEqual([{ url: '/events/7/revert', method: 'POST', body: undefined }]);
+});
+
+test('a refused revert is told in a toast', async () => {
+  project = detail({ events: [eventView({ id: 7 })] });
+  writes['POST /events/7/revert'] = () => json({ error: 'already_reverted', message: 'already' }, 409);
+  await renderPage();
+  fireEvent.click(within(region('事件日志')).getByRole('button', { name: '撤销' }));
+  fireEvent.click(within(region('事件日志')).getByRole('button', { name: '确定撤销？' }));
+  expect(await screen.findByText('已经撤销过了')).toBeTruthy();
+});
+
+test('the timeline clock moves on every 60 seconds and stops when the page goes away', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-30T12:00:00.000Z'));
+  const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+  const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+  project = detail({
+    created_at: '2026-10-28T12:00:00.000Z',
+    contributions: [contribution({ ts_start: '2026-10-29T12:00:00.000Z', ts_end: null, summary: '在跑', session: tag({ effective_status: 'working' }) })],
+  });
+  const view = await renderPage();
+
+  const clock = setIntervalSpy.mock.calls.findIndex(([, delay]) => delay === 60_000);
+  expect(clock).toBeGreaterThanOrEqual(0);
+  const bar = () => screen.getByText('gx10-090e · claude · 在跑');
+  expect(bar().getAttribute('title')).toContain(`– ${shortTime('2026-10-30T12:00:00.000Z')}`);
+
+  vi.setSystemTime(new Date('2026-10-30T12:01:00.000Z'));
+  act(() => {
+    (setIntervalSpy.mock.calls[clock][0] as () => void)();
+  });
+  expect(bar().getAttribute('title')).toContain(`– ${shortTime('2026-10-30T12:01:00.000Z')}`);
+
+  const handle = setIntervalSpy.mock.results[clock].value;
+  expect(clearIntervalSpy).not.toHaveBeenCalledWith(handle);
+  view.unmount();
+  expect(clearIntervalSpy).toHaveBeenCalledWith(handle);
+  vi.useRealTimers();
+});
+
+test('最近活动 is counted from the page clock, like the timeline, not from whenever the page last drew', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-10-30T12:00:00.000Z'));
+  const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
+  project = detail({ created_at: '2026-10-02T12:00:00.000Z', last_activity_at: '2026-10-30T11:55:00.000Z' });
+  await renderPage();
+  expect(screen.getByText('创建于 10/02 · 最近活动 5 分钟前')).toBeTruthy();
+
+  // The page draws again (a change came in) before the clock has ticked: the text stays with the clock.
+  vi.setSystemTime(new Date('2026-10-30T12:01:00.000Z'));
+  emit('project:p_1');
+  await waitFor(() => expect(reads('/projects/p_1')).toBe(2));
+  await act(async () => {});
+  expect(screen.getByText('创建于 10/02 · 最近活动 5 分钟前')).toBeTruthy();
+
+  const clock = setIntervalSpy.mock.calls.findIndex(([, delay]) => delay === 60_000);
+  act(() => {
+    (setIntervalSpy.mock.calls[clock][0] as () => void)();
+  });
+  expect(screen.getByText('创建于 10/02 · 最近活动 6 分钟前')).toBeTruthy();
+});
+
+test('a pending-questions list that cannot be read is said on the page', async () => {
+  fetchMock.mockImplementation(async (input, init) => {
+    if (String(input) === '/questions?status=pending&project_id=p_1') return new Response('down', { status: 500 });
+    if (String(input) === '/projects/p_1') return json(project);
+    if (String(input) === '/projects') return json(projects);
+    return json({ error: 'not_found' }, 404);
+  });
+  await renderPage();
+  expect((await screen.findByText(/读不到待回答的问题/)).textContent).toBe('读不到待回答的问题：服务器返回了错误（HTTP 500）');
+});
+
+test('the merge menu says 读不到项目列表 when the project list cannot be read', async () => {
+  fetchMock.mockImplementation(async (input) => {
+    if (String(input) === '/projects') return new Response('down', { status: 500 });
+    if (String(input) === '/projects/p_1') return json(project);
+    if (String(input).startsWith('/activity')) return json({ error: 'not_found' }, 404);
+    return json([]);
+  });
+  await renderPage();
+  await waitFor(() => expect(reads('/projects')).toBe(1));
+  fireEvent.change(screen.getByRole('combobox', { name: '阶段' }), { target: { value: 'merged' } });
+  expect(await screen.findByText('读不到项目列表')).toBeTruthy();
+  expect(screen.queryByText('没有可以合并进去的项目')).toBeNull();
+});
+
+test('a change announced for this project reads it again; one for another project does not', async () => {
+  await renderPage();
+  const before = reads('/projects/p_1');
+  emit('project:p_2');
+  await act(async () => {});
+  expect(reads('/projects/p_1')).toBe(before);
+  project = detail({ title: '别处改的标题' });
+  emit('project:p_1');
+  expect(await screen.findByRole('button', { name: '别处改的标题' })).toBeTruthy();
+  expect(reads('/projects/p_1')).toBe(before + 1);
+});
+
+test('a change on the sessions topic reads the project again (its active sessions and contributions show sessions)', async () => {
+  await renderPage();
+  const before = reads('/projects/p_1');
+  emit('sessions');
+  await waitFor(() => expect(reads('/projects/p_1')).toBe(before + 1));
+});
+
+test('questions and the project list are read again on their own topics', async () => {
+  await renderPage();
+  const q = reads('/questions?status=pending&project_id=p_1');
+  const p = reads('/projects');
+  pending = [question({ prompt: '新问题' })];
+  emit('questions');
+  expect(await screen.findByText('新问题')).toBeTruthy();
+  expect(reads('/questions?status=pending&project_id=p_1')).toBe(q + 1);
+  emit('projects');
+  await waitFor(() => expect(reads('/projects')).toBe(p + 1));
+});
+
+test('opening another project starts from scratch', async () => {
+  const view = await renderPage();
+  expect(screen.getByRole('button', { name: 'dLLM 评测框架' })).toBeTruthy();
+  fetchMock.mockImplementation(async (input) => {
+    const path = String(input);
+    if (path === '/projects/p_7') return json(detail({ id: 'p_7', title: '另一个项目' }));
+    if (path === '/projects') return json([]);
+    if (path.startsWith('/activity')) return json({ error: 'not_found' }, 404);
+    return json([]);
+  });
+  view.rerender(
+    <StreamContext.Provider value={stream}>
+      <ToastProvider>
+        <ProjectPage id="p_7" />
+      </ToastProvider>
+    </StreamContext.Provider>,
+  );
+  expect(await screen.findByRole('button', { name: '另一个项目' })).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'dLLM 评测框架' })).toBeNull();
+});
+
+test('the status band shows where the project stands, its recent work and its own changes', async () => {
+  project = detail({ stage: 'verify', open_blockers: [blocker()], todos: [todo({ id: 't_1' }), todo({ id: 't_2', status: 'done' })] });
+  pulse = activity({ days: ['2026-11-14', '2026-11-15'], projects: [projectActivity({ daily: [2, 5], marks: [{}, {}], totals: { chunks: 7, sessions: 2, decisions: 3, done: 4, stage_changes: 0, blockers_opened: 0, blockers_cleared: 0 } })], items: [item({ day: 1 })] });
+  await renderPage();
+  const metrics = screen.getByRole('group', { name: '项目指标' });
+  expect(within(metrics).getByRole('img', { name: '阶段：验证' })).toBeTruthy();
+  expect(within(metrics).getByText('开放阻塞').parentElement!.textContent).toBe('开放阻塞1');
+  expect(within(metrics).getByText('未完成 todo').parentElement!.textContent).toBe('未完成 todo1');
+  await waitFor(() => expect(within(metrics).getByText('30 天决策').parentElement!.textContent).toBe('30 天决策3'));
+  expect(screen.getByRole('region', { name: '投入' }).textContent).toContain('近 30 天 7 段对话 · 2 个 session');
+  const changes = screen.getByRole('region', { name: '最近变化' });
+  expect(within(changes).getByText('评测集先用公开 v2')).toBeTruthy();
+  // Its own feed: no project name on every row.
+  expect(within(changes).queryByRole('link')).toBeNull();
+  pulse = null;
+});

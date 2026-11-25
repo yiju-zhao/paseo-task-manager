@@ -1,0 +1,45 @@
+{
+  "name": "agent-pm",
+  "version": "0.1.0",
+  "scripts": {
+    "build:web": "vite build",
+    "dev:web": "vite",
+    "seed:demo": "node scripts/seed-demo.ts",
+    "typecheck": "tsc && tsc -p web",
+    "test": "vitest run",
+    "setup:admin": "node scripts/setup-admin.ts"
+  },
+  "type": "module",
+  "bin": {
+    "agent-pm": "src/cli.ts",
+    "herdr-pm": "src/cli.ts"
+  },
+  "engines": {
+    "node": ">=26"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.314",
+    "@getpaseo/client": "0.15.0",
+    "@hono/node-server": "^2.1.5",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "hono": "^4.13.14",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "ws": "8.22.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "10.4.2",
+    "@testing-library/react": "16.3.3",
+    "@types/node": "^26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/ws": "8.18.2",
+    "@vitejs/plugin-react": "6.1.2",
+    "jsdom": "30.1.3",
+    "typescript": "^7.0.2",
+    "vite": "8.3.5",
+    "vitest": "^5.0.5"
+  },
+  "private": true
+}

@@ -1,0 +1,242 @@
+import { useMemo } from 'react';
+import type { ProjectCard, ProjectDetail, QuestionView } from '../../../src/domain/read.ts';
+import { PRIORITIES, PRIORITY_LABEL, PRIORITY_MEANING } from '../../../src/shared/vocab.ts';
+import { apiSend, errorText } from '../api.ts';
+import type { ApiError } from '../api.ts';
+import { Fold, Section } from '../components/blocks.tsx';
+import { EditableText } from '../components/editable-text.tsx';
+import { EventLog } from '../components/event-log.tsx';
+import { BlockerList, DecisionList, MilestoneList, TodoList } from '../components/items.tsx';
+import { projectHref } from '../components/project-card.tsx';
+import { QuestionCard } from '../components/question-card.tsx';
+import { StageControl } from '../components/stage-control.tsx';
+import { Timeline } from '../components/timeline.tsx';
+import { relTime, shortDate } from '../format.ts';
+import type { ActivityView } from '../../../src/domain/activity.ts';
+import { DayBars, Metric, Panel, StagePipeline } from '../components/viz.tsx';
+import { ActivityRow, activityPath } from './overview.tsx';
+import { useApi } from '../use-api.ts';
+import { useNow } from '../use-now.ts';
+import { useWrite } from '../use-write.ts';
+
+type ProjectField = 'summary' | 'why' | 'done_criteria';
+
+/** The big picture (spec 9.2), in the order it is read. */
+const BIG_PICTURE: Array<{ field: ProjectField; label: string }> = [
+  { field: 'summary', label: '是什么' },
+  { field: 'why', label: '为什么' },
+  { field: 'done_criteria', label: '做完的标准' },
+];
+
+type PageProps = { project: ProjectDetail; reload(): void };
+
+const projectPath = (project: ProjectDetail) => `/projects/${encodeURIComponent(project.id)}`;
+
+function ErrorBar({ error, onRetry }: { error: ApiError; onRetry(): void }) {
+  return (
+    <div className="error-bar" role="alert">
+      <span>{errorText(error)}</span>
+      <button type="button" onClick={onRetry}>
+        重试
+      </button>
+    </div>
+  );
+}
+
+function Missing({ id }: { id: string }) {
+  return (
+    <main data-page="project" data-project-id={id}>
+      <p>项目不存在或已删除</p>
+      <a href="#/">回首页</a>
+    </main>
+  );
+}
+
+function MergedBanner({ into, titles }: { into: string; titles: Map<string, string> }) {
+  return (
+    <div className="banner" role="status">
+      已合并到 <a href={projectHref(into)}>{titles.get(into) ?? into}</a>
+    </div>
+  );
+}
+
+function PriorityControl({ project, reload }: PageProps) {
+  const { fire } = useWrite(reload);
+  const path = projectPath(project);
+  return (
+    <span className="priority-control">
+      <select
+        aria-label="优先级"
+        className={project.priority === null ? 'prio pnone' : `prio ${project.priority.toLowerCase()}`}
+        title={project.priority === null ? '还没有优先级' : `${project.priority}：${PRIORITY_MEANING[project.priority]}`}
+        value={project.priority ?? ''}
+        onChange={(e) => void fire(() => apiSend('PATCH', path, { priority: e.target.value === '' ? null : e.target.value }))}
+      >
+        <option value="">未定</option>
+        {PRIORITIES.map((p) => (
+          <option key={p} value={p} title={PRIORITY_MEANING[p]}>
+            {`${p} · ${PRIORITY_LABEL[p]}`}
+          </option>
+        ))}
+      </select>
+    </span>
+  );
+}
+
+type OverviewProps = PageProps & {
+  mergeTargets: Array<{ id: string; title: string }> | undefined;
+  mergeTargetsFailed: boolean;
+  now: Date;
+};
+
+function Overview({ project, reload, mergeTargets, mergeTargetsFailed, now }: OverviewProps) {
+  const { write } = useWrite(reload);
+  const path = projectPath(project);
+  return (
+    <section className="overview" aria-label="项目概览">
+      <div className="title-row">
+        <PriorityControl project={project} reload={reload} />
+        <h2 className="proj-title">
+          <EditableText
+            value={project.title}
+            onSave={(title) => write(() => apiSend('PATCH', path, { title }))}
+          />
+        </h2>
+      </div>
+      <StageControl project={project} mergeTargets={mergeTargets} mergeTargetsFailed={mergeTargetsFailed} reload={reload} />
+      <div className="dim">{`创建于 ${shortDate(project.created_at)} · 最近活动 ${relTime(project.last_activity_at, now)}`}</div>
+    </section>
+  );
+}
+
+const PULSE_DAYS = 30;
+
+/** The project at a glance: where it stands, what is open, how much work went in lately and what changed. */
+function Pulse({ project, now }: { project: ProjectDetail; now: Date }) {
+  const activity = useApi<ActivityView>(activityPath(PULSE_DAYS, project.id), [`project:${project.id}`]);
+  const a = activity.data;
+  const mine = a?.projects.find((p) => p.id === project.id);
+  const openTodos = project.todos.filter((t) => t.status !== 'done').length;
+  return (
+    <div className="pulse">
+      <div className="metrics pulse-metrics" role="group" aria-label="项目指标">
+        <div className="metric"><span className="metric-label">阶段</span><StagePipeline stage={project.stage} /></div>
+        <Metric label="开放阻塞" value={project.open_blockers.length} tone={project.open_blockers.length > 0 ? 'bad' : undefined} />
+        <Metric label="未完成 todo" value={openTodos} />
+        <Metric label="活跃 session" value={project.active_sessions.length} tone={project.active_sessions.length > 0 ? 'ok' : undefined} />
+        <Metric label={`${PULSE_DAYS} 天决策`} value={mine?.totals.decisions ?? '—'} tone="accent" />
+        <Metric label={`${PULSE_DAYS} 天完成`} value={mine?.totals.done ?? '—'} />
+      </div>
+      {a && mine ? (
+        <div className="pulse-grid">
+          <Panel title="投入" meta={`近 ${PULSE_DAYS} 天 ${mine.totals.chunks} 段对话 · ${mine.totals.sessions} 个 session`}>
+            <DayBars values={mine.daily} labels={a.days} label="每天收到的对话段数" />
+            <div className="axis"><span>{a.days[0]!.slice(5)}</span><span>今天</span></div>
+          </Panel>
+          <Panel title="最近变化" meta={`${a.items.length} 条`}>
+            {a.items.length === 0 ? <p className="empty">近 {PULSE_DAYS} 天没有决策、完成或阶段变化。</p> : null}
+            <ul className="feed">{a.items.slice(0, 6).map((item) => <ActivityRow key={`${item.event_id}-${item.kind}-${item.text}`} item={item} now={now} />)}</ul>
+          </Panel>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function BigPicture({ project, reload }: PageProps) {
+  const { write } = useWrite(reload);
+  const path = projectPath(project);
+  return (
+    <>
+      {BIG_PICTURE.map(({ field, label }) => (
+        <Section key={field} title={label}>
+          <EditableText
+            multiline
+            value={project[field]}
+            placeholder="（还没有）"
+            onSave={(value) => write(() => apiSend('PATCH', path, { [field]: value }))}
+          />
+        </Section>
+      ))}
+    </>
+  );
+}
+
+/** What the user deleted: the AI is told not to propose it again, so it is shown rather than lost. */
+function Tombstones({ tombstones }: { tombstones: ProjectDetail['tombstones'] }) {
+  if (tombstones.length === 0) return null;
+  return (
+    <Fold label={`已删除的条目（${tombstones.length}）`}>
+      <p className="dim">这些是你删掉的，AI 不会再把它们加回来</p>
+      <ul className="items">
+        {tombstones.map((t) => (
+          <li key={`${t.table}:${t.id}`} className="item dim">{`${t.label} · ${shortDate(t.deleted_at)}`}</li>
+        ))}
+      </ul>
+    </Fold>
+  );
+}
+
+/** The project page (spec 9.2): the big picture, the stage, the milestones, todos, blockers and decisions (all editable), then who took part and what happened. */
+export function ProjectPage({ id }: { id: string }) {
+  const encoded = encodeURIComponent(id);
+  const project = useApi<ProjectDetail>(`/projects/${encoded}`, [`project:${id}`, 'sessions']);
+  const questions = useApi<QuestionView[]>(`/questions?status=pending&project_id=${encoded}`, ['questions']);
+  const projects = useApi<ProjectCard[]>('/projects', ['projects']);
+  const now = useNow();
+
+  const titles = useMemo(() => new Map((projects.data ?? []).map((p) => [p.id, p.title])), [projects.data]);
+  // Undefined until the list has arrived, so the merge menu can tell "still loading" (or "could not read") from "none".
+  const mergeTargets = useMemo(() => projects.data?.map((p) => ({ id: p.id, title: p.title })), [projects.data]);
+
+  const { data, error, reload } = project;
+  if (error?.status === 404) return <Missing id={id} />;
+
+  if (data === undefined) {
+    return (
+      <main data-page="project" data-project-id={id}>
+        {error !== null ? <ErrorBar error={error} onRetry={reload} /> : <div className="dim">加载中…</div>}
+      </main>
+    );
+  }
+
+  const pending = questions.data ?? [];
+  const answered = () => {
+    questions.reload();
+    reload();
+  };
+
+  return (
+    <main data-page="project" data-project-id={id}>
+      {data.merged_into !== null ? <MergedBanner into={data.merged_into} titles={titles} /> : null}
+      {error !== null ? <ErrorBar error={error} onRetry={reload} /> : null}
+      <a className="project-back" href="#/">所有项目</a>
+      <Overview project={data} reload={reload} mergeTargets={mergeTargets} mergeTargetsFailed={projects.error !== null} now={now} />
+      <Pulse project={data} now={now} />
+      <div className="cols">
+        <div className="main">
+          {questions.error !== null ? (
+            <div className="dim" role="status">{`读不到待回答的问题：${errorText(questions.error)}`}</div>
+          ) : null}
+          {pending.length > 0 ? (
+            <Section title={`待你回答 · ${pending.length}`}>
+              {pending.map((q) => (
+                <QuestionCard key={q.id} question={q} onDone={answered} />
+              ))}
+            </Section>
+          ) : null}
+          <BigPicture project={data} reload={reload} />
+          <MilestoneList project={data} reload={reload} />
+          <TodoList project={data} reload={reload} />
+        </div>
+        <aside className="side">
+          <BlockerList project={data} reload={reload} />
+          <DecisionList project={data} reload={reload} />
+        </aside>
+      </div>
+      <Timeline project={data} now={now} />
+      <EventLog events={data.events} reload={reload} />
+      <Tombstones tombstones={data.tombstones} />
+    </main>
+  );
+}
