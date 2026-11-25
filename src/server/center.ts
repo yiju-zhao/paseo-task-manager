@@ -18,11 +18,12 @@ import { Settings } from './settings.ts';
 import { attachStream } from './stream.ts';
 
 export type CenterOptions = {
-  config: ServerConfig;
+  config: ServerConfig & { dbPath: string };
   configDir: string;
   webDir: string;
   log: (line: string) => void;
   runner?: LlmRunner;
+  openDatabase?: typeof openDb;
 };
 
 export type RunningCenter = { db: DatabaseSync; port: number; stop(): Promise<void> };
@@ -38,7 +39,7 @@ function readTokenFile(path: string): string {
   return token;
 }
 
-export async function startCenter({ config, configDir, webDir, log, runner }: CenterOptions): Promise<RunningCenter> {
+export async function startCenter({ config, configDir, webDir, log, runner, openDatabase = openDb }: CenterOptions): Promise<RunningCenter> {
   const understanding = understandingSettings(config);
   if (understanding.enabled && understanding.oauthTokenFile) readTokenFile(understanding.oauthTokenFile);
   let guard: DatabaseSync | undefined;
@@ -50,7 +51,7 @@ export async function startCenter({ config, configDir, webDir, log, runner }: Ce
       const started = new Date(Date.now() - process.uptime() * 1000).toISOString();
       writeFileSync(lock + '.owner', `pid ${process.pid}, started ${started}`, { mode: 0o600 });
     }
-    const database = openDb(config.dbPath);
+    const database = openDatabase(config.dbPath);
     db = database;
     const settings = new Settings(database, config, join(configDir, 'secrets'));
     let scheduler: Scheduler | null = null;
@@ -69,7 +70,7 @@ export async function startCenter({ config, configDir, webDir, log, runner }: Ce
     }
     const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm });
     const feed = new ChangeFeed(database, { status: () => scheduler?.status() ?? disabledStatus() });
-    const server = serve({ fetch: app.fetch, port: config.port });
+    const server = serve({ fetch: app.fetch, port: config.port, hostname: config.listen });
     const stream = attachStream(server as Server, feed);
     let address;
     try {
@@ -87,7 +88,7 @@ export async function startCenter({ config, configDir, webDir, log, runner }: Ce
       throw err;
     }
     scheduler?.start();
-    log(`agent-pm server: listening on :${address} (all interfaces), db ${config.dbPath}, ${Object.keys(config.collectors).length} collector(s)`);
+    log(`agent-pm server: listening on :${address} (${config.listen ?? 'all interfaces'}), db ${config.dbPath}, ${Object.keys(config.collectors).length} collector(s)`);
     let stopping: Promise<void> | undefined;
     async function shutdown() {
       stream.close();

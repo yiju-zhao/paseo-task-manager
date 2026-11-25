@@ -5,7 +5,7 @@ import { openSource, optionalFileCounter } from './route.ts';
 import { HistoryImport } from './collector/history-import.ts';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
-import { loadServerConfig } from '../../src/server/config.ts';
+import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
 import { inProcessClient } from './in-process.ts';
 
 import { PaseoCollectorConfig } from './collector/config.ts';
@@ -13,9 +13,9 @@ import { PaseoCollector } from './collector/loop.ts';
 import { Outbox } from './collector/outbox.ts';
 import { isLoaded } from './collector/sdk.ts';
 import { StateDir } from './collector/state-store.ts';
-import { checkStoragePath, pluginPaths } from './config.ts';
+import { pluginPaths } from './config.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
-import { importProgress, settings, type Preferences } from '../shared/settings.ts';
+import { centerStatus, importProgress, settings, type Preferences } from '../shared/settings.ts';
 import { RemoteWorkspaces, type UnknownFileCount } from './workspaces.ts';
 
 declare const CHECKOUT_WEB_DIR: string;
@@ -23,8 +23,6 @@ declare const CHECKOUT_WEB_DIR: string;
 export default function contribute(server: Pick<PluginServerContext, 'registerSettings' | 'handle'>) {
   const stored = server.registerSettings(settings);
   const cfg = pluginPaths();
-  const config = loadServerConfig(cfg.configPath);
-  checkStoragePath(config.dbPath, cfg.daemonHome);
   const local = createPaseoClient({ url: cfg.daemonUrl, clientId: 'paseo-task-manager-' + randomUUID(), connectTimeoutMs: 5000 });
   const writers = new Map<string, string>();
   const workers = new Map<string, PaseoCollector>();
@@ -39,9 +37,30 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   const log = (s: string) => console.info(s);
 
   let center: RunningCenter | undefined;
-  const startup = startCenter({ config, configDir: dirname(cfg.configPath),
-    webDir: CHECKOUT_WEB_DIR, log }).then(value => { center = value; });
-  void startup.catch(err => console.error('center startup', String(err)));
+  let config: ReturnType<typeof pluginConfig>;
+  let reason = '';
+  let canStartFresh = false;
+  let starting: Promise<void> | undefined;
+  function boot(fresh = false) {
+    if (center || stopped) return;
+    starting ??= (async () => {
+      config = pluginConfig(cfg);
+      center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log,
+        openDatabase: path => openPluginDatabase(cfg, path, fresh) });
+      reason = '';
+      canStartFresh = false;
+    })().catch(err => {
+      reason = err instanceof Error ? err.message : String(err);
+      canStartFresh = err instanceof DatabaseProblem && err.canStartFresh;
+      console.error('中心未启动', reason);
+    }).finally(() => { starting = undefined; });
+    return starting;
+  }
+  void boot();
+  server.handle(centerStatus, async ({ action }) => {
+    if (action === 'retry' || (action === 'fresh' && canStartFresh)) await boot(action === 'fresh');
+    return { configPath: cfg.configPath, running: Boolean(center), reason, canStartFresh };
+  });
 
   async function start(source: PaseoSource, center: RunningCenter) {
     const { serverId, sourceId } = source;
@@ -104,7 +123,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   }));
 
   async function reconcile() {
-    await startup;
+    await starting;
     const running = center;
     if (!running) return;
     // Apply deselections even if directory lookup fails.
@@ -158,7 +177,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     try { await Promise.all([...workers].map(([id, w]) => stop(id, w))); }
     finally {
       await local.close();
-      await startup.catch(() => {});
+      await starting;
       await center?.stop();
     }
   };

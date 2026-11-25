@@ -19,6 +19,10 @@ test('The plugin resolves host-specific paths and reads the local daemon endpoin
     expect(pluginPaths(daemon)).toMatchObject({
       daemonUrl: 'ws://127.0.0.1:6767/ws', configPath: join(dir, 'paseo-task-manager', 'srv_fixture', 'config.json'),
     });
+    const first = pluginPaths(daemon);
+    writeFileSync(join(daemon, 'server-id'), 'srv_second');
+    expect(pluginPaths(daemon).stateRoot).not.toBe(first.stateRoot);
+    expect(pluginPaths(daemon).configPath).not.toBe(first.configPath);
     vi.stubEnv('XDG_STATE_HOME', daemon);
     expect(() => pluginPaths(daemon)).toThrow(/inside daemon home/);
   } finally {

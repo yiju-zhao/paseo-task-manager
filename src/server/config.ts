@@ -19,7 +19,8 @@ const SourceLabel = z.string().regex(/^[A-Za-z0-9._-]+$/, 'source id must contai
 export const ServerConfig = z
   .object({
     port: z.number().int().min(1).max(65535),
-    dbPath: z.string().min(1),
+    dbPath: z.string().min(1).optional(),
+    listen: z.string().min(1).optional(),
     userToken: Token,
     mcpToken: Token,
     collectors: z.record(MachineLabel, z.string().min(1)),
@@ -105,7 +106,7 @@ export function understandingSettings(config: ServerConfig): UnderstandingSettin
  * Reads and validates the server config. A relative `dbPath` or `understanding.oauthTokenFile` is resolved against the
  * config file's directory.
  */
-export function loadServerConfig(path: string): ServerConfig {
+export function loadServerConfig(path: string, defaultDatabase?: () => string): ServerConfig & { dbPath: string } {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
@@ -132,7 +133,9 @@ export function loadServerConfig(path: string): ServerConfig {
   }
   const config = parsed.data;
   // ':memory:' is SQLite's in-memory database, not a file name.
-  const dbPath = config.dbPath === ':memory:' ? config.dbPath : resolve(dirname(path), config.dbPath);
+  const database = config.dbPath ?? defaultDatabase?.();
+  if (!database) throw new Error(`invalid server config ${path}: dbPath is required`);
+  const dbPath = database === ':memory:' ? database : resolve(dirname(path), database);
   if (config.understanding !== undefined) {
     const { oauthTokenFile, jevKeyFile } = config.understanding;
     const understanding = {

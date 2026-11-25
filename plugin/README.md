@@ -4,7 +4,7 @@
 
 ## 配置和安装
 
-插件从 daemon 的运行记录取得本机地址和 serverId。中心配置位于 `$XDG_CONFIG_HOME/paseo-task-manager/<serverId>/config.json`，未指定配置根目录时使用 `~/.config`。网页设置的凭据保存在同级 `secrets/`。采集器的身份、锁与 outbox 按来源保存在该 daemon 的状态目录里。
+插件从 daemon 的运行记录取得本机地址和 serverId。中心配置位于 `$XDG_CONFIG_HOME/paseo-task-manager/<serverId>/config.json`，未指定配置根目录时使用 `~/.config`。首次使用时自动生成权限为 600 的配置，端口为 7718，只监听本机；显式配置可用 listen 指定监听地址，省略 listen 时沿用全网卡监听。令牌在配置文件内。默认数据库位于状态目录下的 task-manager.db，独立的 database.json 记录它的身份。库不见时可在设置中重试或确认重建；身份不符时请移走异库或改用其他路径。网页设置的凭据保存在同级 `secrets/`。采集器的身份、锁与 outbox 按来源保存在该 daemon 的状态目录里。
 
 使用 Paseo 0.17 以上和 Node 26 以上。从仓库根目录运行以下命令。服务端包从本检出的根依赖加载 Claude Agent SDK 及其可执行文件，运行期间须保留检出和依赖。
 

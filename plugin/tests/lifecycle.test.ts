@@ -17,6 +17,7 @@ test('Reloading the contribution releases the previous listener, subscriptions a
   const daemon = join(dir, 'daemon');
   const conf = join(dir, 'paseo-task-manager', 'srv_fixture');
   mkdirSync(daemon);
+  mkdirSync(join(dir, 'data'));
   mkdirSync(conf, { recursive: true });
   writeFileSync(join(daemon, 'config.json'), '{}');
   writeFileSync(join(daemon, 'paseo.pid'), JSON.stringify({ listen: '127.0.0.1:6767' }));
@@ -25,7 +26,7 @@ test('Reloading the contribution releases the previous listener, subscriptions a
   vi.stubEnv('XDG_CONFIG_HOME', dir);
   vi.stubEnv('XDG_STATE_HOME', join(dir, 'state'));
   vi.stubGlobal('CHECKOUT_WEB_DIR', dir);
-  writeFileSync(join(conf, 'config.json'), JSON.stringify({ ...config, port: address.port, dbPath: join(dir, 'center.db'), understanding: { enabled: false } }));
+  writeFileSync(join(conf, 'config.json'), JSON.stringify({ ...config, port: address.port, dbPath: join(dir, 'data', 'center.db'), understanding: { enabled: false } }));
   const endpoint = `http://127.0.0.1:${address.port}/status`;
   const unsubscribe = vi.fn();
   try {

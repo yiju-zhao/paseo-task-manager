@@ -22,3 +22,9 @@ export const importProgress = defineRpc({
       root: z.string(), branch: z.string().nullable(), ahead: z.number().nullable(), behind: z.number().nullable() })),
   }),
 });
+
+export const centerStatus = defineRpc({
+  name: 'center.status',
+  input: z.object({ action: z.enum(['retry', 'fresh']).optional() }),
+  output: z.object({ configPath: z.string(), running: z.boolean(), reason: z.string(), canStartFresh: z.boolean() }),
+});

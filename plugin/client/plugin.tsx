@@ -2,9 +2,9 @@ import { View } from 'react-native';
 import type { PluginTheme, RpcOutput } from '@getpaseo/plugin';
 import { useEffect, useState } from 'react';
 import { usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
+import { SettingsAction, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
 import type { HostDirectory } from '@getpaseo/client';
-import { importProgress, settings } from '../shared/settings.ts';
+import { centerStatus, importProgress, settings } from '../shared/settings.ts';
 
 const description = [
   '关闭时，已关闭和已归档的 session 只采集名称、状态、工作目录等信息。',
@@ -47,6 +47,32 @@ function HistoryProgress({ selected, theme }: { selected: string[]; theme: Plugi
   </SettingsRow>;
 }
 
+function DatabaseSettings() {
+  const status = useRpc(centerStatus);
+  const [state, setState] = useState<RpcOutput<typeof centerStatus>>();
+  const [confirming, confirm] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    const poll = () => status({}).then(value => { if (active) setState(value); })
+      .catch(() => { if (active) setError('无法读取中心状态'); });
+    void poll();
+    const timer = setInterval(poll, 3000);
+    return () => { active = false; clearInterval(timer); };
+  }, [status]);
+  async function recover(action: 'retry' | 'fresh') {
+    confirm(false);
+    try { setState(await status({ action })); setError(''); }
+    catch { setError('操作未完成，请重试'); }
+  }
+  return <SettingsSection title="中心">
+    <SettingsRow label={state?.running ? '中心已启动' : state?.reason || '读取中心状态中'} hint={state?.configPath} error={error || undefined} />
+    {state?.reason && <SettingsAction label="检查数据库和配置" actionLabel="已找回文件，重试" onPress={() => void recover('retry')} />}
+    {state?.canStartFresh && <SettingsAction label={confirming ? '将创建新库，并更新原库身份记录' : '原库文件不存在'}
+      actionLabel={confirming ? '确认创建新库' : '确认从零开始'} onPress={() => confirming ? void recover('fresh') : confirm(true)} />}
+  </SettingsSection>;
+}
+
 function CollectionSettings({ theme }: PluginSurfaceProps) {
   const api = usePaseo();
   const prefs = useSettings(settings);
@@ -66,6 +92,7 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
   const known = hosts ? [hosts.self, ...hosts.hosts] : [];
   const ids = known.flatMap(h => h.serverId ? [h.serverId] : []);
   return <>
+    <DatabaseSettings />
     <SettingsSection title="采集机器">
       {error && <SettingsRow label={error} />}
       <SettingsSwitch label="全选" disabled={prefs.saving || !ids.length} value={!!ids.length && ids.every(id => selectedHosts.includes(id))}
