@@ -1,12 +1,12 @@
-# Session sync for agent-pm
+# Task manager for Paseo
 
-Choose which Paseo hosts contribute sessions to your agent-pm project board. The plugin runs on the machine hosting the center and continues collecting when the app is closed.
+Choose which Paseo hosts contribute sessions to your agent-pm project board. The plugin runs the center, web board and MCP endpoint in its own process and continues collecting when the app is closed.
 
-The collector reads sessions on the local daemon and hosts registered with that daemon. It sends session metadata, conversation text and bounded tool input/output to your configured agent-pm center. That center may use its own model provider to summarize the conversations. Each source resumes from the last position acknowledged by the center.
+The collector reads sessions on the local daemon and hosts registered with that daemon. It stores session metadata, conversations and bounded tool details in the local center. That center may use its own model provider to summarize the conversations. Each source resumes from the last position acknowledged by the center.
 
 ## Setup
 
-Use Paseo 0.17.0 or later, Node 26 or later and an existing agent-pm center. The state directory uses local filesystem locking on macOS or Linux. Git installation needs npm to retrieve the locked dependencies and build the plugin. Configure the center URL, daemon and source IDs and a token file for each source on the collecting machine. Keep tokens readable only by the daemon account. See the [configuration and setup guide](README.md).
+Use Paseo 0.17 or later and Node 26 or later. Install from the plugin directory in a prepared local checkout. Each daemon has its own private configuration, credentials and database identity record. New configurations listen on loopback. See the [setup guide](README.md).
 
 ## Collection settings
 

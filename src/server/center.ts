@@ -99,10 +99,15 @@ export async function startCenter({ config, configDir, webDir, log, runner, upst
       const closed = new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
       if (scheduler?.status().running) log('agent-pm server: waiting for the running model call to finish…');
       try {
-        await Promise.all([closed, scheduler?.stop()]);
+        // A final in-flight HTTP edit can still wake the scheduler.
+        await closed;
       } finally {
-        database.close();
-        guard?.close();
+        try {
+          await scheduler?.stop();
+        } finally {
+          database.close();
+          guard?.close();
+        }
       }
     }
     return { db: database, port: address, stop: () => stopping ??= shutdown() };

@@ -7,6 +7,8 @@ const agentSdk = rootRequire.resolve('@anthropic-ai/claude-agent-sdk');
 const checkout = {
   name: 'checkout-dependencies',
   setup(build) {
+    // The MCP SDK's classic v4 entry and the plugin schemas share the daemon's zod export.
+    build.onResolve({ filter: /^zod\/v4$/ }, () => ({ path: 'zod', external: true }));
     build.onResolve({ filter: /^@anthropic-ai\/claude-agent-sdk$/ }, () => ({ path: agentSdk, namespace: 'agent-sdk' }));
     build.onLoad({ filter: /.*/, namespace: 'agent-sdk' }, () => ({
       contents: `import { createRequire } from 'node:module';

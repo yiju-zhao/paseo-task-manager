@@ -49,22 +49,22 @@ async function prepare() {
 test('Reloading the contribution releases the previous listener, subscriptions and timers.', async () => {
   const endpoint = await prepare();
   const unsubscribe = vi.fn();
-    for (let i = 0; i < 2; i++) {
-      const cleanup = contribute({
-        registerSettings: definition => ({
-          read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({}) }),
-          subscribe: () => unsubscribe,
-        }),
-        handle: () => {},
-      });
-      try {
-        await vi.waitFor(async () => expect((await fetch(endpoint)).ok).toBe(true));
-      } finally {
-        await cleanup();
-      }
-      expect(unsubscribe).toHaveBeenCalledTimes(i + 1);
-      await expect(fetch(endpoint)).rejects.toThrow();
+  for (let i = 0; i < 2; i++) {
+    const cleanup = contribute({
+      registerSettings: definition => ({
+        read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({}) }),
+        subscribe: () => unsubscribe,
+      }),
+      handle: () => {},
+    });
+    try {
+      await vi.waitFor(async () => expect((await fetch(endpoint)).ok).toBe(true));
+    } finally {
+      await cleanup();
     }
+    expect(unsubscribe).toHaveBeenCalledTimes(i + 1);
+    await expect(fetch(endpoint)).rejects.toThrow();
+  }
 });
 
 test('Deselecting the host stops its collector and preserves the registration.', async () => {
