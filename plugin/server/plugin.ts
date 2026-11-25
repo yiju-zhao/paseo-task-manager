@@ -44,7 +44,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   function boot(fresh = false) {
     if (center || stopped) return;
     starting ??= (async () => {
-      config = pluginConfig(cfg);
+      config = Object.assign(pluginConfig(cfg), { selectedPaseoHosts: () => prefs.selectedHosts });
       center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log,
         openDatabase: path => openPluginDatabase(cfg, path, fresh) });
       reason = '';
@@ -140,9 +140,11 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     await Promise.all(prefs.selectedHosts.map(async id => {
       const existing = workers.get(id);
       if (existing && !online.has(id)) await stop(id, existing);
-      if (existing || !online.has(id) || !selected(id)) return;
+      if (existing || !selected(id)) return;
       const host = [hosts.self, ...hosts.hosts].find(h => h.serverId === id);
-      const source = selectSource(running.db, id, host?.label || id, Object.keys(config.paseoCollectors ?? {}));
+      if (!host) return;
+      const source = selectSource(running.db, id, host.label || id, Object.keys(config.paseoCollectors ?? {}));
+      if (!online.has(id)) return;
       try { await start(source, running); } catch (err) { console.error(source.sourceId, String(err)); }
     }));
   }

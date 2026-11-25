@@ -98,12 +98,17 @@ function cutCounts(db: DatabaseSync, sourceId: string): { truncated_chunks: numb
   return out;
 }
 
-export type SourceConfig = Pick<ServerConfig, 'collectors' | 'paseoCollectors'>;
+export type SourceConfig = Pick<ServerConfig, 'collectors' | 'paseoCollectors'> & { selectedPaseoHosts?: () => string[] };
 
 export function configuredSources(db: DatabaseSync, config: SourceConfig) {
   const configured = new Map<string, { kind: SourceKind; machine: string; createdAt?: string }>();
   for (const machine of Object.keys(config.collectors)) configured.set(herdrSourceId(machine), { kind: 'herdr', machine });
   for (const [id, entry] of Object.entries(config.paseoCollectors ?? {})) configured.set(id, { kind: 'paseo', machine: entry.machine });
+  if (config.selectedPaseoHosts) {
+    const sources = db.prepare("SELECT source_id, machine FROM ingest_sources WHERE kind='paseo' AND server_id IN (SELECT value FROM json_each(?))")
+      .all(JSON.stringify(config.selectedPaseoHosts()));
+    for (const row of sources) configured.set(String(row.source_id), { kind: 'paseo', machine: String(row.machine) });
+  }
   // A herdr collector key made in the UI names its machine in its scope (a Paseo source must be in the config anyway).
   for (const key of db.prepare("SELECT scope, min(created_at) AS createdAt FROM api_keys WHERE revoked_at IS NULL AND scope LIKE 'ingest:herdr:%' GROUP BY scope").all() as Array<{ scope: string; createdAt: string }>) {
     const machine = key.scope.slice('ingest:herdr:'.length);

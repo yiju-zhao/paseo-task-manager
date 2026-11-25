@@ -683,3 +683,19 @@ describe('addressable context tools', () => {
     expect((await read('pm_get_turn', { turn: 'bad' })).isError).toBe(true);
   });
 });
+
+test('The overview lists the offline source once and counts the remaining healthy ones.', async () => {
+  const add = t.db.prepare("INSERT INTO ingest_sources(source_id, kind, machine, collector_heartbeat) VALUES (?, 'herdr', ?, ?)");
+  for (const label of ['first', 'second', 'offline']) add.run('herdr:' + label, label, label === 'offline' ? '2000-01-01' : NOW);
+  const overview = (await call('pm_overview')).text;
+  expect(overview).toContain('herdr:offline');
+  expect(overview).toContain('其余 2 个来源正常');
+  expect(overview).not.toContain('herdr:first');
+});
+
+test('Healthy sources are summarized in one line when there are no source problems.', async () => {
+  t.db.prepare("INSERT INTO ingest_sources(source_id, kind, machine, collector_heartbeat) VALUES ('herdr:fixture', 'herdr', 'fixture', ?)").run(NOW);
+  const overview = (await call('pm_overview')).text;
+  expect(overview).toContain('1 个来源正常');
+  expect(overview).not.toContain('herdr:fixture');
+});

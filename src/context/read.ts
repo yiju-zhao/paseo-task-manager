@@ -48,6 +48,7 @@ type SessionOutline = Turn & {
 };
 type Overview = {
   sources: { id: string; state: string; last_sync: string | null }[];
+  healthySources: number;
   undigested: number;
   refusals: number;
   pending: Pending[];
@@ -58,17 +59,19 @@ type Overview = {
 
 export function readOverview(db: DatabaseSync, now: Date, reader: string, sources?: { config: SourceConfig; startedAt: Date }): Overview {
   const rows = db.prepare('SELECT * FROM ingest_sources ORDER BY source_id').all() as SourceRow[];
-  const coverage = rows.map(source => ({
+  const configured = sources ? configuredSources(db, sources.config) : null;
+  const coverage = rows.filter(row => !configured || configured.has(row.source_id)).map(source => ({
     id: source.source_id,
     state: sourceState(source, now),
     last_sync: source.last_snapshot_at ?? source.collector_heartbeat,
   }));
-  for (const [id] of configuredSources(db, sources?.config ?? { collectors: {} })) {
+  for (const id of configured?.keys() ?? []) {
     if (!coverage.some((s) => s.id === id)) coverage.push({ id, state: 'never_reported', last_sync: null });
   }
   const sessions = listSessions(db, {}, now);
   const links = sessionLinks(db);
-  const pending: Pending[] = listReminders(db, now, sources).map((r) => ({
+  const pending = listReminders(db, now, sources).map((r) => ({
+    priority: ({ agent_waiting: 0, waiting_you: 2, stalled: 3, unpushed: 3, waiting_external: 4, source_offline: 4 })[r.category],
     text: r.text,
     since: r.since,
     ref: r.short_id ? 's:' + r.short_id : (r.project_id ?? r.key),
@@ -79,9 +82,9 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
         `SELECT prompt AS text, created_at AS since, id AS ref FROM questions WHERE status='pending'
     AND created_at>=? AND (project_id IS NULL OR project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL))`,
       )
-      .all(new Date(now.getTime() - QUESTION_TTL_DAYS * 86400_000).toISOString()) as Pending[]),
+      .all(new Date(now.getTime() - QUESTION_TTL_DAYS * 86400_000).toISOString()) as Pending[]).map(q => ({ ...q, priority: 1 })),
   );
-  pending.sort((a, b) => (a.since ?? '').localeCompare(b.since ?? ''));
+  pending.sort((a, b) => a.priority - b.priority || (a.since ?? '').localeCompare(b.since ?? ''));
   const latestTurn = db.prepare('SELECT n, ts_start FROM turns WHERE session_key=? ORDER BY n DESC LIMIT 1');
   const openingMessage = db.prepare(
     "SELECT substr(text, 1, 80) AS text FROM context_turn_events WHERE session_key=? AND n=? AND kind='user' ORDER BY first_event LIMIT 1",
@@ -112,7 +115,8 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
     )
     .all(cursor?.last_event_id ?? dayAgo) as ChangeSummary[];
   return {
-    sources: coverage,
+    sources: coverage.filter(source => source.state !== 'ok'),
+    healthySources: coverage.filter(source => source.state === 'ok').length,
     pending,
     running,
     changes,

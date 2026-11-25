@@ -129,6 +129,7 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
             [
               `待摘要会话 ${overview.undigested}，拒摘窗口 ${overview.refusals}`,
               ...overview.sources.map((s) => `${s.id} · ${s.state} · ${s.last_sync ?? '未同步'}`),
+              `${overview.sources.length ? '其余 ' : ''}${overview.healthySources} 个来源正常`,
             ],
             '查看来源覆盖页',
           ],

@@ -158,3 +158,18 @@ test('the overview counts a refused window only under refusals', async () => {
     UPDATE chunks SET digest_block_id=(SELECT id FROM digest_blocks)`);
   expect(readOverview(center.db, center.now, 'reader')).toMatchObject({ undigested: 0, refusals: 1 });
 });
+
+test('An agent waiting for an answer precedes a month-old stalled project.', async () => {
+  center.db.prepare("INSERT INTO projects(id, title, priority, stage, created_at) VALUES ('p_stale', 'stale', 'P1', 'idea', ?)").run(
+    new Date(center.now.getTime() - 30 * 86400_000).toISOString());
+  await writer.snapshot([agent('agent', { native_id: short, native_id_origin: 'runtime', status: 'blocked' })]);
+  const pending = readOverview(center.db, center.now, 'reader').pending;
+  expect(pending.map(row => row.ref)).toEqual(['s:' + short, 'p_stale']);
+});
+
+test('The older of two pending questions appears first.', () => {
+  const add = center.db.prepare("INSERT INTO questions(id, prompt, status, created_at) VALUES (?, 'question', 'pending', ?)");
+  add.run('q_new', center.now.toISOString());
+  add.run('q_old', new Date(center.now.getTime() - 300_000).toISOString());
+  expect(readOverview(center.db, center.now, 'reader').pending.map(row => row.ref)).toEqual(['q_old', 'q_new']);
+});
