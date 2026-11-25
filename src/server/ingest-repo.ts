@@ -311,6 +311,8 @@ export function commitBatch(db: DatabaseSync, src: PaseoSource, batch: BatchV2, 
     // epoch, overlapping seqs. A row with a known id elsewhere in the same epoch is another row, `<key>~<seqStart>`.
     // Identical content under any variant of the key is a duplicate, also across epochs (a replayed history).
     const findDup = db.prepare('SELECT id, event_key, turn_id FROM source_events WHERE source_id = ? AND stream_id = ? AND base_key = ? AND content_hash = ?');
+    const stampedVersions = db.prepare(`SELECT event_key, turn_id, ts, content_hash FROM source_events
+      WHERE source_id=? AND stream_id=? AND base_key=? AND (epoch<>? OR (seq_start<=? AND seq_end>=?)) ORDER BY id`);
     const fillTurnId = db.prepare('UPDATE source_events SET turn_id=? WHERE session_key=? AND event_key=? AND turn_id IS NULL');
     const sameRow = db.prepare(
       `SELECT id, event_key, revision, kind, text, meta, turn_id FROM source_events
@@ -339,7 +341,10 @@ export function commitBatch(db: DatabaseSync, src: PaseoSource, batch: BatchV2, 
     const toMaterialize: Array<{ id: number; event: TimelineEvent; continuation?: string }> = [];
     for (const e of batch.events) {
       const h = contentHash(e);
-      const duplicate = findDup.get(src.sourceId, batch.agent_id, e.key, h);
+      // Compare against earlier timestamps so replay still works after tool details are evicted.
+      const duplicate = findDup.get(src.sourceId, batch.agent_id, e.key, h) ??
+        stampedVersions.all(src.sourceId, batch.agent_id, e.key, e.epoch, e.seq_end, e.seq_start)
+          .find(version => version.content_hash === contentHash({ ...e, ts: version.ts as string | null }));
       if (duplicate) {
         if (e.turn_id != null && duplicate.turn_id === null) {
           fillTurnId.run(e.turn_id, key, duplicate.event_key);
