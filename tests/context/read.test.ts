@@ -173,3 +173,35 @@ test('The older of two pending questions appears first.', () => {
   add.run('q_old', new Date(center.now.getTime() - 300_000).toISOString());
   expect(readOverview(center.db, center.now, 'reader').pending.map(row => row.ref)).toEqual(['q_old', 'q_new']);
 });
+
+test('Explicit retrieval reads only evicted detail and leaves the stored event evicted.', async () => {
+  await deliver([tool]);
+  const { explicitItem } = await import('../../src/context/upstream.ts');
+  let calls = 0;
+  const upstream = async () => { calls++; return { text: 'upstream original' }; };
+  expect((await explicitItem(center.db, short, 1, 1, 0, upstream)).text).toContain(input);
+  expect(calls).toBe(0);
+  center.db.exec("UPDATE source_events SET meta=json_set(meta, '$.detail_cleared_at', 'fixture', '$.input_preview', 'shell', '$.tool.input', NULL, '$.tool.output', NULL, '$.tool.error', NULL)");
+  expect((await explicitItem(center.db, short, 1, 1, 0, upstream)).text).toBe('upstream original');
+  expect(calls).toBe(1);
+  expect(readTurn(center.db, short, 1, true).items[0].tool?.input).toBe('shell');
+  expect(readItem(center.db, short, 1, 1, { offset: 0 }).missing).toBe(true);
+});
+
+test('An upstream failure leaves the reader a reason and the retained summary.', async () => {
+  await deliver([tool]);
+  center.db.exec("UPDATE source_events SET meta=json_set(meta, '$.detail_cleared_at', 'fixture', '$.input_preview', 'build command')");
+  const { explicitItem } = await import('../../src/context/upstream.ts');
+  const raw = await explicitItem(center.db, short, 1, 1, 0, async () => ({ reason: '机器离线' }));
+  expect(raw.text).toContain('机器离线');
+  expect(raw.text).toContain('build command');
+});
+
+test('An upstream timeout reports the retained tool summary.', async () => {
+  await deliver([tool]);
+  center.db.exec("UPDATE source_events SET meta=json_set(meta, '$.detail_cleared_at', 'fixture', '$.input_preview', 'build')");
+  const { explicitItem } = await import('../../src/context/upstream.ts');
+  const result = await explicitItem(center.db, short, 1, 1, 0, async () => new Promise(() => {}), AbortSignal.timeout(10));
+  expect(result.text).toContain('读取超时');
+  expect(result.text).toContain('build');
+});

@@ -153,6 +153,7 @@ function Body({ view }: { view: EvidenceView }) {
             <div className="dim">{item.kind} · {item.address}</div>
             {item.refused && <div className="dim">{view.refusal_note}</div>}
             <pre>{item.tool ? `${item.tool.name} ${item.tool.input} · ${item.tool.status} · exit=${item.tool.exit_code ?? '—'}` : item.text}</pre>
+            {item.detail && <pre>{item.detail}</pre>}
           </section>
         ))}
       </>

@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import type { ZodType } from 'zod';
+import { explicitTurn, type Upstream } from '../context/upstream.ts';
 import { getActivity, MAX_ACTIVITY_DAYS } from '../domain/activity.ts';
 import { listReminders, snoozeReminder } from '../domain/reminders.ts';
 import { getEvidence, parseEvidenceRef } from '../domain/evidence.ts';
@@ -117,10 +118,12 @@ export function createApp(
   app.get('/sessions/by-short-id/:sid', (c) => c.json(findByShortId(db, c.req.param('sid'), clock())));
 
   // The conversation text behind a decision. It is raw, so unlike the other reads it needs the user token.
-  app.get('/evidence/:ref', userAuth(config, db, clock), (c) => {
+  app.get('/evidence/:ref', userAuth(config, db, clock), async (c) => {
     const ref = c.req.param('ref');
-    if (parseEvidenceRef(ref) === null) return c.json({ error: 'invalid' }, 400);
+    const address = parseEvidenceRef(ref);
+    if (address === null) return c.json({ error: 'invalid' }, 400);
     const evidence = getEvidence(db, clock(), ref);
+    if (address.kind === 'turn' && evidence?.turn) await explicitTurn(db, address.session, address.id, evidence.turn, opts.upstream);
     return evidence === null ? c.json({ error: 'not_found' }, 404) : c.json(evidence);
   });
 
@@ -157,7 +160,7 @@ export function createApp(
   mountDomainRoutes(app, db, config, deps, () => scheduler?.requestProjectReview?.());
   mountMergeRoutes(app, db, deps, userAuth(config, db, clock), opts.mergeLlm ?? null, () => scheduler?.requestProjectReview?.());
   mountAdminRoutes(app, db, config, deps, opts.settings ?? new Settings(db, config, null, clock));
-  mountMcp(app, db, config, deps);
+  mountMcp(app, db, config, deps, opts.upstream);
   mountWeb(app, opts.webDir ?? null);
 
   return app;
@@ -170,7 +173,7 @@ export type SessionListItem = SessionView & { linked_projects: Array<{ id: strin
  * `settings`: the run-time settings (models, provider credential); without one, secrets cannot be set from the UI.
  * `mergeLlm`: the model that drafts merge previews; without one, previews answer `understanding_disabled`.
  */
-export type AppOptions = { scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
+export type AppOptions = { upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
 
 /**
  * Authenticates an ingest request, then reads and validates its JSON body. Order: bearer token

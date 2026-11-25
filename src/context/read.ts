@@ -218,6 +218,8 @@ export function readSession(
 }
 
 type Item = {
+  cleared?: boolean;
+  detail?: string;
   address: string;
   kind: string;
   text: string;
@@ -226,6 +228,8 @@ type Item = {
 };
 type StoredItem = {
   event_key: string;
+  ts: string | null;
+  content_hash: string;
   server_id: string;
   stream_id: string;
   kind: string;
@@ -233,7 +237,7 @@ type StoredItem = {
   meta: string | null;
   refused: number;
 };
-type EventMeta = { tool?: ToolInfo | null; text_truncated?: Truncation };
+type EventMeta = { detail_cleared_at?: string; input_preview?: string; tool?: ToolInfo | null; text_truncated?: Truncation };
 
 export function readTurn(db: DatabaseSync, shortId: string, turn: number, background = false): { address: string; items: Item[] } {
   const { key, short } = resolveSession(db, shortId);
@@ -246,18 +250,31 @@ export function readTurn(db: DatabaseSync, shortId: string, turn: number, backgr
     address,
     items: rows.map((r, i) => {
       const isHidden = background && !!r.refused;
-      const tool = isHidden ? null : (JSON.parse(r.meta ?? '{}') as EventMeta).tool;
+      const meta: EventMeta = isHidden ? {} : JSON.parse(r.meta ?? '{}');
+      const tool = meta.tool;
       return {
+        ...(meta.detail_cleared_at ? { cleared: true } : {}),
         address: address + '.' + (i + 1),
         kind: r.kind,
         refused: !!r.refused,
         text: isHidden ? ISOLATED_TEXT : (r.text ?? '原文不在库里'),
         tool: tool
-          ? { name: tool.name, input: Array.from(tool.input).slice(0, 200).join(''), status: tool.status, exit_code: tool.exit_code }
+          ? { name: tool.name, input: meta.input_preview ?? Array.from(tool.input).slice(0, 200).join(''), status: tool.status, exit_code: tool.exit_code }
           : null,
       };
     }),
   };
+}
+
+export function formatToolText(tool: { input: string; output: string; error: string | null }) {
+  return [tool.input && '【输入】\n' + tool.input, tool.output && '【输出】\n' + tool.output, tool.error && '【错误】\n' + tool.error]
+    .filter(Boolean).join('\n\n');
+}
+
+export function textPage(text: string, offset: number) {
+  const chars = Array.from(text);
+  const end = offset + 4000;
+  return { text: chars.slice(offset, end).join(''), total: chars.length, next_offset: end < chars.length ? end : null };
 }
 
 export function readItem(
@@ -266,43 +283,28 @@ export function readItem(
   turn: number,
   item: number,
   { offset }: { offset: number },
-): {
-  address: string;
-  text: string;
-  missing: boolean;
-  total: number;
-  next_offset: number | null;
-  truncated: Truncation | { input: Truncation; output: Truncation };
-  refused: boolean;
-  pointer: { server_id: string; agent_id: string; event_key: string };
-} {
+) {
   const { key, short } = resolveSession(db, shortId);
   const address = 's:' + short + '#' + turn + '.' + item;
   const row = db
-    .prepare('SELECT * FROM context_turn_events WHERE session_key=? AND n=? ORDER BY first_event LIMIT 1 OFFSET ?')
+    .prepare(`SELECT v.*, e.base_key AS event_key, e.content_hash FROM context_turn_events v JOIN source_events e ON e.id=v.latest_event
+      WHERE v.session_key=? AND v.n=? ORDER BY v.first_event LIMIT 1 OFFSET ?`)
     .get(key, turn, item - 1) as StoredItem | undefined;
   if (!row) throw new ContextAddressError(`找不到回合条目：${address}`);
   const meta = JSON.parse(row.meta ?? '{}') as EventMeta;
   const tool = meta.tool;
-  const missing = row.text === null || (!tool && row.text === '');
-  let text: string;
-  if (tool && !missing) {
-    text = [
-      tool.input && '【输入】\n' + tool.input,
-      tool.output && '【输出】\n' + tool.output,
-      tool.error && '【错误】\n' + tool.error,
-    ].filter(Boolean).join('\n\n');
-  } else {
-    text = row.text ?? '';
-  }
-  const chars = Array.from(text);
-  const pageSize = 4000;
+  const cleared = meta.detail_cleared_at ? { ts: row.ts, hash: row.content_hash } : null;
+  const missing = !!cleared || row.text === null || (!tool && row.text === '');
+  const page = textPage(tool && !missing ? formatToolText(tool) : row.text ?? '', offset);
+  let text = page.text;
+  if (cleared && tool) text = `中心已清除这段详情 · ${tool.name} ${meta.input_preview ?? ''} · ${tool.status}`;
+  else if (missing) text = '原文不在库里';
   return {
     address,
     missing,
-    text: missing ? '原文不在库里' : chars.slice(offset, offset + pageSize).join(''),
-    total: chars.length,
-    next_offset: offset + pageSize < chars.length ? offset + pageSize : null,
+    cleared,
+    ...page,
+    text,
     truncated: tool ? { input: tool.input_truncated, output: tool.output_truncated } : (meta.text_truncated ?? null),
     refused: !!row.refused,
     pointer: { server_id: row.server_id, agent_id: row.stream_id, event_key: row.event_key },

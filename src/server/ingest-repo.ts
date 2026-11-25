@@ -258,7 +258,7 @@ export function bodyHash(body: unknown): string {
   return createHash('sha256').update(JSON.stringify(content)).digest('hex');
 }
 
-function contentHash(e: TimelineEvent): string {
+export function contentHash(e: TimelineEvent): string {
   return createHash('sha256')
     .update(JSON.stringify([e.kind, e.item_type, e.ts, e.text, e.text_truncated, e.tool]))
     .digest('hex');

@@ -12,7 +12,8 @@ import { inProcessClient } from './in-process.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { PaseoCollector } from './collector/loop.ts';
 import { Outbox } from './collector/outbox.ts';
-import { isLoaded } from './collector/sdk.ts';
+import { upstreamReader } from './upstream.ts';
+import { agentReads, isLoaded } from './collector/sdk.ts';
 import { StateDir } from './collector/state-store.ts';
 import { pluginPaths } from './config.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
@@ -35,6 +36,11 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   let current: Promise<void> | undefined;
   const selected = (id: string) => !stopped && prefs.selectedHosts.includes(id);
   const log = (s: string) => console.info(s);
+  const upstream = upstreamReader(async id => {
+    await local.connect();
+    const api = await local.hosts.client(id);
+    return { ...agentReads(api.agents), close: () => api.dispose() };
+  }, selected, () => prefs.readClosed);
 
   let center: RunningCenter | undefined;
   let config: ReturnType<typeof pluginConfig>;
@@ -45,7 +51,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     if (center || stopped) return;
     starting ??= (async () => {
       config = Object.assign(pluginConfig(cfg), { selectedPaseoHosts: () => prefs.selectedHosts });
-      center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log,
+      center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream,
         openDatabase: path => openPluginDatabase(cfg, path, fresh) });
       reason = '';
       canStartFresh = false;

@@ -1,9 +1,10 @@
 import type { DatabaseSync } from 'node:sqlite';
 
+import { explicitItem, explicitTurn, type Upstream } from '../context/upstream.ts';
 import { z } from 'zod';
 
 import { ContextAddressError, parseAddress } from '../context/address.ts';
-import { markOverviewRead, readItem, readOverview, readSession, readTurn, ISOLATED_TEXT, REFUSAL_NOTE, resolveSession } from '../context/read.ts';
+import { markOverviewRead, readOverview, readSession, readTurn, ISOLATED_TEXT, REFUSAL_NOTE, resolveSession } from '../context/read.ts';
 import type { DomainDeps } from '../domain/types.ts';
 import type { SourceConfig } from '../server/coverage.ts';
 import { searchContext } from '../server/search.ts';
@@ -13,7 +14,7 @@ import { defineTool } from './define-tool.ts';
 
 const OVERVIEW_SECTION_CHARS = 330;
 
-export type OverviewSources = { config: SourceConfig; startedAt: Date };
+export type OverviewSources = { config: SourceConfig; startedAt: Date; upstream?: Upstream };
 
 export function searchTool(db: DatabaseSync): ToolDef {
   const defaultLimit = 20;
@@ -53,7 +54,7 @@ export function searchTool(db: DatabaseSync): ToolDef {
   );
 }
 
-export function sessionTools(db: DatabaseSync, deps: DomainDeps, background: boolean, inspected?: Set<string>): ToolDef[] {
+export function sessionTools(db: DatabaseSync, deps: DomainDeps, background: boolean, inspected?: Set<string>, upstream?: Upstream): ToolDef[] {
   return [
     defineTool(
       {
@@ -94,16 +95,17 @@ export function sessionTools(db: DatabaseSync, deps: DomainDeps, background: boo
         description: '按回合地址读取消息全文和每次工具调用的概要。每行末尾的条目地址可以直接交给 pm_read_raw 分页读取原文。',
         input: { turn: z.string() },
       },
-      (args) => {
+      async (args) => {
         const a = parseAddress(args.turn);
         if (a.kind !== 'turn') throw new ContextAddressError('需要回合地址');
         const turn = readTurn(db, a.session, a.turn, background);
+        if (!background) await explicitTurn(db, a.session, a.turn, turn, upstream);
         if (turn.items.some((i) => !i.refused)) inspected?.add(turn.address);
         return {
           text: turn.items
             .map(
               (i) =>
-                `- ${i.kind} · ${i.tool ? `${i.tool.name} ${oneLine(i.tool.input)} · ${i.tool.status} · exit=${i.tool.exit_code ?? '—'}` : i.text}${!background && i.refused ? ' · ' + REFUSAL_NOTE : ''} · ${i.address}`,
+                `- ${i.kind} · ${i.tool ? `${i.tool.name} ${oneLine(i.tool.input)} · ${i.tool.status} · exit=${i.tool.exit_code ?? '—'}` : i.text}${i.detail ? '\n' + i.detail : ''}${!background && i.refused ? ' · ' + REFUSAL_NOTE : ''} · ${i.address}`,
             )
             .join('\n'),
         };
@@ -168,17 +170,17 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
         return { text };
       },
     ),
-    ...sessionTools(db, deps, false),
+    ...sessionTools(db, deps, false, undefined, sources?.upstream),
     defineTool(
       {
         name: 'pm_read_raw',
         description: '按条目地址和 offset 读取原文，每页最多 4000 字符。内容已截断时标注保留长度，原文不在库里时提供上游指针。',
         input: { item: z.string(), offset: z.number().int().nonnegative().optional() },
       },
-      (args) => {
+      async (args) => {
         const a = parseAddress(args.item);
         if (a.kind !== 'item') throw new ContextAddressError('需要条目地址');
-        const raw = readItem(db, a.session, a.turn, a.item, { offset: args.offset ?? 0 });
+        const raw = await explicitItem(db, a.session, a.turn, a.item, args.offset ?? 0, sources?.upstream);
         const truncations: string[] = [];
         if (raw.truncated && 'input' in raw.truncated) {
           for (const [section, cut] of [['输入', raw.truncated.input], ['输出', raw.truncated.output]] as const) {

@@ -39,7 +39,7 @@ function json(v: unknown): string {
 }
 
 /** A tool's input summary and output as text, by detail type; unknown detail types fall back to their JSON. */
-function toolText(detail: Rec): { input: string; output: string; exitCode: number | null } {
+export function toolText(detail: Rec): { input: string; output: string; exitCode: number | null } {
   const exitCode = typeof detail.exitCode === 'number' ? detail.exitCode : null;
   switch (detail.type) {
     case 'shell':
@@ -67,7 +67,7 @@ function toolText(detail: Rec): { input: string; output: string; exitCode: numbe
   }
 }
 
-function errorText(error: unknown): string | null {
+export function errorText(error: unknown): string | null {
   if (error === null || error === undefined) return null;
   if (typeof error === 'string') return error;
   if (isRec(error)) {
