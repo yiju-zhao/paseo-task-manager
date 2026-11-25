@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { expandHome } from '../paths.ts';
-import { MachineLabel } from '../../../src/shared/protocol.ts';
 
 const PathSetting = z.string().min(1).transform((p) => expandHome(p));
 
@@ -11,7 +10,7 @@ const PathSetting = z.string().min(1).transform((p) => expandHome(p));
  */
 export const PaseoCollectorConfig = z.object({
   sourceId: z.string().regex(/^[A-Za-z0-9._-]+$/, 'sourceId must contain only letters, digits, ".", "_" and "-"'),
-  machine: MachineLabel,
+  machine: z.string().min(1),
   paseo: z.object({
     url: z.string().regex(/^wss?:\/\/\S+$/, 'paseo.url must be a ws:// or wss:// URL (usually ending in /ws)'),
     /** The daemon's server id (`paseo status --json`); a daemon answering with another id is not read. */

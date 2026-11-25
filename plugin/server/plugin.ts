@@ -6,6 +6,7 @@ import { HistoryImport } from './collector/history-import.ts';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
 import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
+import { selectSource } from './sources.ts';
 import { inProcessClient } from './in-process.ts';
 
 import { PaseoCollectorConfig } from './collector/config.ts';
@@ -28,7 +29,6 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   const workers = new Map<string, PaseoCollector>();
   const ledgers = new Map<string, HistoryImport>();
   const unknownFiles = new Map<string, Map<string, UnknownFileCount>>();
-  const bindings = new Map<string, PaseoSource>();
   let prefs: Preferences = { selectedHosts: [], readClosed: false };
   let stopped = false;
   let pending = false;
@@ -109,11 +109,13 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   }
 
   function savedCounts(id: string) {
-    const source = bindings.get(id);
-    return source ? HistoryImport.savedCounts(join(cfg.stateRoot, source.sourceId, 'history.sqlite')) : { total: 0, completed: 0 };
+    const row = center?.db.prepare('SELECT source_id FROM ingest_sources WHERE server_id = ?').get(id);
+    return row ? HistoryImport.savedCounts(join(cfg.stateRoot, String(row.source_id), 'history.sqlite')) : { total: 0, completed: 0 };
   }
 
   server.handle(importProgress, () => ({
+    lastSync: (center?.db.prepare("SELECT server_id, last_snapshot_at FROM ingest_sources WHERE kind='paseo' AND server_id IS NOT NULL").all() ?? [])
+      .map(row => ({ serverId: String(row.server_id), at: row.last_snapshot_at ? String(row.last_snapshot_at) : null })),
     sources: prefs.selectedHosts.map(serverId => ({
       serverId, ...(ledgers.get(serverId)?.counts() ?? savedCounts(serverId)),
       ready: workers.get(serverId)?.historyInventoryReady ?? false,
@@ -139,15 +141,9 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
       const existing = workers.get(id);
       if (existing && !online.has(id)) await stop(id, existing);
       if (existing || !online.has(id) || !selected(id)) return;
-      const row = running.db.prepare('SELECT source_id, machine FROM ingest_sources WHERE server_id = ? AND kind = ?')
-        .get(id, 'paseo');
-      const configured = Object.entries(config.paseoCollectors ?? {}).find(([, source]) => source.serverId === id);
-      if (!row && !configured) return;
-      const sourceId = row ? String(row.source_id) : configured![0];
-      const machine = row ? String(row.machine) : configured![1].machine;
-      const source = { serverId: id, sourceId, machine };
-      bindings.set(id, source);
-      try { await start(source, running); } catch (err) { console.error(sourceId, String(err)); }
+      const host = [hosts.self, ...hosts.hosts].find(h => h.serverId === id);
+      const source = selectSource(running.db, id, host?.label || id, Object.keys(config.paseoCollectors ?? {}));
+      try { await start(source, running); } catch (err) { console.error(source.sourceId, String(err)); }
     }));
   }
   function refresh() {

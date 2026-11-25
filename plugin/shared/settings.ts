@@ -17,6 +17,7 @@ export const importProgress = defineRpc({
   name: 'history.progress',
   input: z.object({}),
   output: z.object({
+    lastSync: z.array(z.object({ serverId: z.string(), at: z.string().nullable() })),
     sources: z.array(z.object({ serverId: z.string(), total: z.number(), completed: z.number(), ready: z.boolean() })),
     unknownFileCounts: z.array(z.object({ serverId: z.string(), workspaceId: z.string(), isDirty: z.boolean().nullable(),
       root: z.string(), branch: z.string().nullable(), ahead: z.number().nullable(), behind: z.number().nullable() })),

@@ -1,8 +1,9 @@
 import { View } from 'react-native';
 import type { PluginTheme, RpcOutput } from '@getpaseo/plugin';
 import { useEffect, useState } from 'react';
-import { usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { SettingsAction, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
+import { useHosts, usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
+import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
+import { registerHost } from './register-host.ts';
 import type { HostDirectory } from '@getpaseo/client';
 import { centerStatus, importProgress, settings } from '../shared/settings.ts';
 
@@ -76,20 +77,43 @@ function DatabaseSettings() {
 function CollectionSettings({ theme }: PluginSurfaceProps) {
   const api = usePaseo();
   const prefs = useSettings(settings);
+  const appHosts = useHosts();
+  const progress = useRpc(importProgress);
+  const [sync, setSync] = useState<RpcOutput<typeof importProgress>['lastSync']>([]);
+  const [form, setForm] = useState<{ label: string; connection: string }>();
+  const [formRevision, resetForm] = useState(0);
+  const [adding, setAdding] = useState(false);
   const [hosts, setHosts] = useState<HostDirectory>();
   const [error, setError] = useState('');
   useEffect(() => {
     let active = true;
-    const load = () => api.hosts.list().then(h => { if (active) { setHosts(h); setError(''); } })
+    const load = () => Promise.all([api.hosts.list(), progress({})]).then(([h, status]) => {
+      if (active) { setHosts(h); setSync(status.lastSync); }
+    })
       .catch(() => { if (active) setError('读取主机列表失败'); });
     void load();
     const timer = setInterval(load, 10_000);
     return () => { active = false; clearInterval(timer); };
-  }, [api]);
+  }, [api, progress]);
   if (prefs.status !== 'ready') return <SettingsRow label={prefs.status === 'loading' ? '读取设置中' : '读取设置失败'} />;
   const { selectedHosts, readClosed } = prefs.values;
   const setHostsSelected = (ids: string[]) => void prefs.save({ selectedHosts: [...new Set(ids)], readClosed }, prefs.revision);
   const known = hosts ? [hosts.self, ...hosts.hosts] : [];
+  function openForm(label: string) {
+    setError('');
+    resetForm(value => value + 1);
+    setForm({ label, connection: '' });
+  }
+  async function add() {
+    if (!form || adding) return;
+    setAdding(true);
+    const code = await registerHost(api.hosts, form.label, form.connection);
+    setAdding(false);
+    if (code) { setError(code); return; }
+    setForm(undefined);
+    setError('');
+    try { setHosts(await api.hosts.list()); } catch { setError('读取主机列表失败'); }
+  }
   const ids = known.flatMap(h => h.serverId ? [h.serverId] : []);
   return <>
     <DatabaseSettings />
@@ -98,8 +122,20 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
       <SettingsSwitch label="全选" disabled={prefs.saving || !ids.length} value={!!ids.length && ids.every(id => selectedHosts.includes(id))}
         onValueChange={on => setHostsSelected(on ? ids : [])} />
       {known.map(h => <SettingsSwitch key={h.serverId ?? ('registrationId' in h ? h.registrationId : h.label)} label={h.label ?? h.serverId ?? '待连接主机'}
+        hint={('status' in h ? ({ online: '在线', offline: '离线', connecting: '连接中', error: '连接异常', disabled: '已禁用' })[h.status] : '本机在线')
+          + ' · 最近同步：' + (sync.find(row => row.serverId === h.serverId)?.at ?? '尚未同步')}
         disabled={!h.serverId || prefs.saving} value={!!h.serverId && selectedHosts.includes(h.serverId)}
         onValueChange={on => { if (h.serverId) setHostsSelected(on ? [...selectedHosts, h.serverId] : selectedHosts.filter(id => id !== h.serverId)); }} />)}
+      {appHosts.filter(h => !ids.includes(h.serverId)).map(h =>
+        <SettingsAction key={h.serverId} label={h.label} hint="未接入" actionLabel="接入" onPress={() => openForm(h.label)} />)}
+      <SettingsAction label="其他机器" actionLabel="手填接入" onPress={() => openForm('')} />
+      {form && <View key={formRevision}>
+        <SettingsInput label="机器名称" initialValue={form.label} onChangeText={label => setForm(value => value && { ...value, label })} />
+        <SettingsInput label="连接地址" hint="填入这台机器 daemon 的地址（主机:端口），或在这台机器上用 paseo daemon pair 生成的配对链接"
+          initialValue="" onChangeText={connection => setForm(value => value && { ...value, connection })} />
+        <SettingsAction label="登记这台机器" actionLabel="接入" disabled={adding || !form.connection.trim()} onPress={() => void add()} />
+        <SettingsAction label="放弃登记" actionLabel="取消" disabled={adding} onPress={() => setForm(undefined)} />
+      </View>}
     </SettingsSection>
     <SettingsSection title="会话内容">
       <SettingsSwitch label="读取已关闭和已归档 session 的内容" hint={description} disabled={prefs.saving} value={readClosed}
