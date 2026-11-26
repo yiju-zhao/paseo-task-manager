@@ -682,3 +682,39 @@ test('ai item ops need a reason and evidence like any other ai write', () => {
   expect(count(t.db, 'todos')).toBe(0);
   expect(count(t.db, 'decisions')).toBe(0);
 });
+
+test('An AI decision with equivalent whitespace and case returns the original ID without an event.', () => {
+  const project = userProject();
+  const first = t.user('record_decision', { project, text: 'Use SQLite' });
+  const before = eventCount();
+  const repeat = t.ai('record_decision', { project, text: '  USE\t sqlite  ' });
+  expect(repeat).toMatchObject({ status: 'applied', event_id: null, id: first.id });
+  expect(eventCount()).toBe(before);
+});
+
+test.each([['record_decision', 'text'], ['upsert_todo', 'title']] as const)(
+  'A user can create two identical entries with %s.', (op, field) => {
+    const args = { project: userProject(), [field]: 'same words' };
+    const first = t.user(op, args);
+    const second = t.user(op, args);
+    expect(second.status).toBe('applied');
+    expect(second.id).not.toBe(first.id);
+  },
+);
+
+test('An AI todo matched by title updates the existing status and preserves the original title.', () => {
+  const project = userProject();
+  const id = aiTodo(project, 'Run checks');
+  expect(t.ai('upsert_todo', { project, title: 'RUN   checks', status: 'done' }).id).toBe(id);
+  expect(row(t.db, 'todos', id)).toMatchObject({ status: 'done', title: 'Run checks' });
+});
+
+test('A deleted decision is excluded when matching new AI decisions.', () => {
+  const project = userProject();
+  const args = { project, text: 'Ship it' };
+  const id = t.ai('record_decision', args).id;
+  t.ai('delete_decision', { project, id });
+  const next = t.ai('record_decision', args);
+  expect(next.status).toBe('applied');
+  expect(next.id).not.toBe(id);
+});

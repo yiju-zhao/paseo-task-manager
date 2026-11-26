@@ -625,3 +625,15 @@ test('without a known project name (a home directory, no Paseo) the title is the
   t.db.prepare("UPDATE sessions SET cwd = '/Users/eason' WHERE key = 'claude:home'").run();
   expect((await call('create_project', { title: '家庭财务整理', from_session: 'claude:home', ...ENV() })).result.status).toBe('applied');
 });
+
+test('Restarting a partially written batch keeps one decision and one todo.', async () => {
+  const project = t.user('create_project', { title: 'Fixture' }).id;
+  const common = { project, reason: 'session evidence', evidence: cite(d1) };
+  for (let run = 0; run < 2; run++) {
+    tools = curatorTools(t.db, t.deps, { digestIds: [d1, d2] });
+    expect((await call('record_decision', { ...common, text: 'Use SQLite' })).result.status).toBe('applied');
+    expect((await call('upsert_todo', { ...common, title: 'Check the migration' })).result.status).toBe('applied');
+  }
+  expect(t.db.prepare('SELECT (SELECT count(*) FROM decisions) decisions, (SELECT count(*) FROM todos) todos').get())
+    .toEqual({ decisions: 1, todos: 1 });
+});

@@ -116,6 +116,21 @@ export function checkMilestone(ctx: OpContext, projectId: string, milestoneId: s
   }
 }
 
+function normalizedText(text: string): string {
+  return text.trim().replace(/\s+/gu, ' ').replace(/[A-Z]/g, letter => letter.toLowerCase());
+}
+
+function matchingItemId(ctx: OpContext, table: 'todos' | 'decisions', project: string, text: string): string | undefined {
+  const column = table === 'todos' ? 'title' : 'text';
+  const wanted = normalizedText(text);
+  // The user may have deliberately created identical rows. Keep them and reuse the earliest live one.
+  const candidates = ctx.db.prepare(`SELECT id, ${column} AS wording FROM ${table}
+    WHERE project_id = ? AND deleted_at IS NULL ORDER BY rowid`).iterate(project);
+  for (const row of candidates) {
+    if (normalizedText(String(row.wording)) === wanted) return String(row.id);
+  }
+}
+
 function upsertTodo(ctx: OpContext, args: OpArgs<'upsert_todo'>): { id: string } {
   loadProject(ctx, args.project);
   const fields = definedFields({
@@ -125,10 +140,15 @@ function upsertTodo(ctx: OpContext, args: OpArgs<'upsert_todo'>): { id: string }
     milestone_id: args.milestone_id,
   });
 
-  if (args.id !== undefined) {
-    const row = loadItem(ctx, 'todos', args.project, args.id);
+  let idToUpdate = args.id;
+  if (ctx.ai && idToUpdate === undefined && args.title !== undefined) {
+    idToUpdate = matchingItemId(ctx, 'todos', args.project, args.title);
+    if (idToUpdate !== undefined) delete fields.title;
+  }
+  if (idToUpdate !== undefined) {
+    const row = loadItem(ctx, 'todos', args.project, idToUpdate);
     if (typeof args.milestone_id === 'string') checkMilestone(ctx, args.project, args.milestone_id);
-    return editLockable(ctx, 'todos', 'upsert_todo', { project: args.project, id: args.id }, row, fields);
+    return editLockable(ctx, 'todos', 'upsert_todo', { project: args.project, id: idToUpdate }, row, fields);
   }
 
   if (args.title === undefined) throw new OpRejected('invalid', 'a new todo needs a title');
@@ -152,6 +172,10 @@ function upsertTodo(ctx: OpContext, args: OpArgs<'upsert_todo'>): { id: string }
 
 function recordDecision(ctx: OpContext, args: OpArgs<'record_decision'>): { id: string } {
   loadProject(ctx, args.project);
+  if (ctx.ai) {
+    const existing = matchingItemId(ctx, 'decisions', args.project, args.text);
+    if (existing !== undefined) return { id: existing };
+  }
   const id = ctx.deps.newId('d');
   ctx.changes.insert('decisions', {
     id,
