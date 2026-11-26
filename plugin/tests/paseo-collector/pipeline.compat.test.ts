@@ -1,4 +1,4 @@
-// Task 5 acceptance: real-shaped (fixture) Paseo rows go SDK → collector → HTTP → DB → digest window → digest → project
+// Task 5 acceptance: real-shaped (fixture) Paseo rows go SDK → collector → in-process ingest → DB → digest window → digest → project
 // evidence, with an injected model; and the herdr + Paseo pair on one session feeds the analysis once.
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test } from 'vitest';
 import { getEvidence } from '@agent-pm/src/domain/evidence.ts';
-import { createCenterClient } from '../../server/collector/client.ts';
+import { inProcessClient } from '../../server/in-process.ts';
 import { PaseoCollectorConfig } from '../../server/collector/config.ts';
 import { PaseoCollector } from '../../server/collector/loop.ts';
 import { Outbox } from '../../server/collector/outbox.ts';
@@ -15,7 +15,7 @@ import { StateDir } from '../../server/collector/state-store.ts';
 import { getSession } from '@agent-pm/src/server/sessions-repo.ts';
 import { nextWindow, runDigest } from '@agent-pm/src/understand/digest.ts';
 import type { LlmRunner } from '@agent-pm/src/understand/llm.ts';
-import { call, count, HERDR_TOKEN, herdrChunks, herdrSession, herdrSnapshot, MACHINE, PASEO_SOURCE, PASEO_TOKEN, SERVER_ID, startCenter, config as centerConfig } from '@agent-pm/tests/helpers/center.ts';
+import { call, count, HERDR_TOKEN, herdrChunks, herdrSession, herdrSnapshot, MACHINE, PASEO_SOURCE, SERVER_ID, startCenter, config as centerConfig } from '@agent-pm/tests/helpers/center.ts';
 import type { SourceCoverage } from '@agent-pm/src/server/coverage.ts';
 import type { Center } from '@agent-pm/tests/helpers/center.ts';
 import { FakePaseo } from '../helpers/fake-paseo.ts';
@@ -38,19 +38,17 @@ afterEach(async () => {
 
 function startCollector(extra: { workspace?: () => Promise<import('../../../src/shared/workspace.ts').Workspace | null> } = {}): PaseoCollector {
   const cfg = PaseoCollectorConfig.parse({
-    server: 'http://center.test',
     sourceId: PASEO_SOURCE,
     machine: MACHINE,
-    tokenFile: '/dev/null',
     paseo: { url: 'ws://daemon.test/ws', serverId: SERVER_ID },
     stateDir: join(dir, 'state'),
     debounceMs: 0,
     pageLimit: 5,
   });
-  const state = StateDir.open(cfg.stateDir, { sourceId: cfg.sourceId, serverId: cfg.paseo.serverId, server: cfg.server });
+  const state = StateDir.open(cfg.stateDir, { sourceId: cfg.sourceId, serverId: cfg.paseo.serverId, server: join(dir, 'center.db') });
   return new PaseoCollector(cfg, {
     sdk: fake,
-    client: createCenterClient({ server: cfg.server, token: PASEO_TOKEN, fetch: (u, i) => Promise.resolve(center.app.request(u, i)) }),
+    client: inProcessClient(center.db, { sourceId: cfg.sourceId, machine: cfg.machine, serverId: cfg.paseo.serverId }, () => center.now),
     state,
     outbox: new Outbox(cfg.stateDir),
     ...(extra.workspace ? { workspace: extra.workspace } : {}),
@@ -87,8 +85,9 @@ const digestRunner = (quote: (chunkIds: number[]) => string): { runner: LlmRunne
       text: '',
       structured: {
         topics: [{ label: '采集器', summary: '修采集器', likely_project_ids: [], is_new_topic: true, confidence: 0.9 }],
-        decisions: [{ text: '用 Paseo SDK 采集', quote_ref: quote(ids) }],
-        progress: ['完成第一步'],
+        decisions: [{ text: '用 Paseo SDK 采集', turns: [], quote_ref: quote(ids) }],
+        session_state: { goal: '核对采集', state: '已验证', waiting_on: null, next: null, note: null },
+        progress: [{ text: '完成第一步', turns: [] }],
         todos_added: [],
         todos_done: [],
         blockers: [],
@@ -168,7 +167,7 @@ test('an agent going idle or being archived changes no project', async () => {
   expect(count(center.db, 'SELECT count(*) AS n FROM events')).toBe(0);
 });
 
-test('large Chinese and emoji messages reach the center across bounded HTTP batches', async () => {
+test('large Chinese and emoji messages reach the center across bounded collector batches', async () => {
   fake.addAgent('unicode');
   for (let i = 0; i < 4; i++) fake.user('unicode', `${i} ${'中🚀'.repeat(20_000)} END-${i}`, `unicode-${i}`);
   c = startCollector();
