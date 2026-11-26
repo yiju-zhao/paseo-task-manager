@@ -21,9 +21,9 @@ export async function createSteward(create: (options: PaseoAgentCreateOptions) =
   const cwd = join(stateRoot, 'steward');
   await mkdir(cwd, { recursive: true, mode: 0o700 });
   const question = input.question?.trim() || '看一下现在的全局态势，告诉我最需要注意的事';
-  const coordination = ['list_hosts', 'list_workspaces', 'list_agents', 'get_agent_status', 'get_agent_activity', 'send_agent_prompt', 'create_agent'];
+  const directory = ['list_hosts', 'list_workspaces', 'list_agents', 'get_agent_status', 'get_agent_activity'];
   // Claude's main-agent profile restricts MCP tools as well as built-ins. allowedTools alone only preapproves calls.
-  const tools = ['Read', 'Glob', 'Grep', ...coordination.map(name => 'mcp__paseo__' + name),
+  const allowedTools = ['Read', 'Glob', 'Grep', ...directory.map(name => 'mcp__paseo__' + name),
     ...['paseo', 'agent-pm'].flatMap(server => [...boardTools].map(name => 'mcp__' + server + '__' + name))];
   const profile = 'task-manager-steward';
   // Exec-form hook: the message is JSON on stdin, never part of a shell command.
@@ -34,13 +34,22 @@ export async function createSteward(create: (options: PaseoAgentCreateOptions) =
       process.exitCode = 2;
     }
   `;
-  const hooks = { PreToolUse: [{ matcher: '^mcp__paseo__send_agent_prompt$', hooks: [
-    { type: 'command', command: process.execPath, args: ['-e', checkDelivery], onFailure: 'block' },
-  ] }] };
+  const checkCreation = `
+    const { tool_input: { settings = {} } } = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+    if (Object.hasOwn(settings, 'modeId') || Object.keys(settings.features ?? {}).length > 0) {
+      process.stderr.write('总管只能以默认模式创建 agent，请省略 settings.modeId 并移除 settings.features 中的选项。');
+      process.exitCode = 2;
+    }
+  `;
+  const checks = { mcp__paseo__send_agent_prompt: checkDelivery, mcp__paseo__create_agent: checkCreation };
+  const ask = Object.keys(checks);
+  const hooks = { PreToolUse: Object.entries(checks).map(([name, check]) => ({ matcher: '^' + name + '$',
+    hooks: [{ type: 'command', command: process.execPath, args: ['-e', check], onFailure: 'block' }] })) };
   const agent = await create({ cwd, idempotencyKey: input.requestKey, title: '总管', labels: { [label]: 'steward' },
-    config: { provider: model.provider + '/' + model.model, options: {
+    config: { provider: model.provider + '/' + model.model, modeId: 'default', options: {
+      allowedTools,
       disallowedTools: ['Bash', 'PowerShell', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Agent', 'Task', 'REPL'],
-      extraArgs: { agent: profile, settings: JSON.stringify({ disableAllHooks: false, hooks }), agents: JSON.stringify({ [profile]: { description: '项目总管', prompt: '', tools } }) },
+      extraArgs: { agent: profile, settings: JSON.stringify({ disableAllHooks: false, permissions: { ask }, hooks }), agents: JSON.stringify({ [profile]: { description: '项目总管', prompt: '', tools: [...allowedTools, ...ask] } }) },
     } },
     prompt: input.projectId ? question + '\n\n项目 ID：' + input.projectId : question });
   return { serverId, agentId: agent.id };

@@ -156,7 +156,9 @@ B5a → B5b → B18 → B6 → B17。
 - 标题"总管"，标签 `task-manager/role: steward`。
 - provider 和模型取自设置。
 - 不能执行命令、不能改文件：Claude 使用逐 agent 的主会话工具白名单和 `config.options.disallowedTools`。只保留 Read、Grep、Glob，下列十个看板工具（含外部 agent-pm 的同名工具），以及 Paseo 的 list_hosts、list_workspaces、list_agents、get_agent_status、get_agent_activity、send_agent_prompt、create_agent。
-- 每次 send_agent_prompt 都在发送前检查参数。只允许默认排队或显式 queue；带 sessionMode、interrupt 或 steer 时，向模型返回拒绝原因。
+- 总管固定使用 Claude 的 default 模式。只读文件、看板工具（含 pm_report）和 Paseo 的目录、状态与活动查询预先批准；send_agent_prompt、create_agent 每次须由用户批准。
+- create_agent 在申请批准前拒绝含 settings.modeId 或非空 settings.features 的请求；同 provider 的子 agent 继承总管的 default 模式；跨 provider 时不指定模式，由 Paseo 决定是否接受。
+- 每次 send_agent_prompt 都在申请批准前检查参数。只允许默认排队或显式 queue；带 sessionMode、interrupt 或 steer 时，向模型返回拒绝原因。
 - 初始消息：用户输入的那句话；留空时为"看一下现在的全局态势，告诉我最需要注意的事"。从项目页进入时，末尾附上项目 ID。
 - 返回 agentId 和 serverId，界面随即用 `navigation.openAgent` 打开它。
 

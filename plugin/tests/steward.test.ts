@@ -91,6 +91,18 @@ test.each(['create', 'resume', 'refresh'] as const)('The %s turn tool returns th
   } finally { await api.close(); }
 });
 
+async function runPreToolHook(tool: string, input: object) {
+  await createSteward(create, dir, 'fixture-host', { provider: 'claude', model: 'fixture-model' }, {});
+  const flags = z.object({ settings: z.string() }).parse(create.mock.calls[0][0].config.options?.extraArgs);
+  const settings = z.object({ hooks: z.object({ PreToolUse: z.array(z.object({ matcher: z.string(), hooks: z.array(z.object({
+    command: z.string(), args: z.array(z.string()), onFailure: z.literal('block'),
+  })) })) }) }).parse(JSON.parse(flags.settings));
+  const matches = settings.hooks.PreToolUse.filter(rule => new RegExp(rule.matcher).test(tool));
+  expect(matches).toHaveLength(1);
+  const [hook] = matches[0].hooks;
+  return spawnSync(hook.command, hook.args, { input: JSON.stringify({ tool_name: tool, tool_input: input }), encoding: 'utf8' });
+}
+
 test.each([
   [{ sessionMode: 'full-access' }, 2],
   [{ activeTurnBehavior: 'interrupt' }, 2],
@@ -98,16 +110,30 @@ test.each([
   [{ activeTurnBehavior: 'queue' }, 0],
   [{}, 0],
 ])('The per-agent pre-tool rule checks the delivery parameters %j.', async (parameters, status) => {
-  await createSteward(create, dir, 'fixture-host', { provider: 'claude', model: 'fixture-model' }, {});
-  const flags = z.object({ settings: z.string() }).parse(create.mock.calls[0][0].config.options?.extraArgs);
-  const settings = z.object({ hooks: z.object({ PreToolUse: z.array(z.object({ matcher: z.string(), hooks: z.array(z.object({
-    command: z.string(), args: z.array(z.string()), onFailure: z.literal('block'),
-  })) })) }) }).parse(JSON.parse(flags.settings));
-  const rule = settings.hooks.PreToolUse[0];
-  expect(new RegExp(rule.matcher).test('mcp__paseo__send_agent_prompt')).toBe(true);
-  const [hook] = rule.hooks;
-  const run = spawnSync(hook.command, hook.args, { input: JSON.stringify({ tool_name: 'mcp__paseo__send_agent_prompt',
-    tool_input: { agentId: 'test-agent', prompt: 'fixture', ...parameters } }), encoding: 'utf8' });
+  const run = await runPreToolHook('mcp__paseo__send_agent_prompt', { agentId: 'test-agent', prompt: 'fixture', ...parameters });
   expect(run.status).toBe(status);
   if (status === 2) expect(run.stderr).toContain('排队');
+});
+
+test.each([
+  [{ settings: { modeId: 'default' } }, 2],
+  [{ settings: { modeId: null } }, 2],
+  [{ settings: { features: { fast_mode: false } } }, 2],
+  [{ settings: { features: {} } }, 0],
+  [{}, 0],
+])('The creation hook checks nested mode and feature overrides %j.', async (parameters, status) => {
+  const run = await runPreToolHook('mcp__paseo__create_agent', { provider: 'claude/model', title: 'fixture', initialPrompt: 'Continue',
+    labels: {}, workspaceId: 'workspace', serverId: 'fixture-host', background: false, notifyOnFinish: false, ...parameters });
+  expect(run.status).toBe(status);
+  if (status === 2) expect(run.stderr).toContain('默认模式');
+});
+test('Default mode preapproves reads and asks for both coordination actions.', async () => {
+  await createSteward(create, dir, 'fixture-host', { provider: 'claude', model: 'fixture-model' }, {});
+  const config = create.mock.calls[0][0].config;
+  expect(config.modeId).toBe('default');
+  const options = z.object({ allowedTools: z.array(z.string()), extraArgs: z.object({ agent: z.string(), agents: z.string(), settings: z.string() }) }).parse(config.options);
+  const profiles = z.record(z.string(), z.object({ tools: z.array(z.string()) })).parse(JSON.parse(options.extraArgs.agents));
+  const { permissions } = z.object({ permissions: z.object({ ask: z.array(z.string()) }) }).parse(JSON.parse(options.extraArgs.settings));
+  expect(permissions.ask.sort()).toEqual(['mcp__paseo__create_agent', 'mcp__paseo__send_agent_prompt']);
+  expect(options.allowedTools.sort()).toEqual(profiles[options.extraArgs.agent].tools.filter(name => !permissions.ask.includes(name)).sort());
 });
