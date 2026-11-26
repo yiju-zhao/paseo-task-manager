@@ -9,6 +9,7 @@ import type { PaseoSource } from '../../src/server/ingest-repo.ts';
 import { ToolStorage } from '../../src/server/tool-storage.ts';
 import { modelSettings } from '../shared/models.ts';
 import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
+import { registerBoard } from './board.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { HistoryImport } from './collector/history-import.ts';
 import { PaseoCollector } from './collector/loop.ts';
@@ -53,6 +54,9 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     return { ...agentReads(api.agents), close: () => api.dispose() };
   }, selected, () => prefs.readClosed);
 
+  const startedAt = new Date();
+  const centerReady = new Set<() => void>();
+  const paseoHostSelection = () => ({ selected: [...registered].filter(selected), total: registered.size + unidentifiedHosts });
   let center: RunningCenter | undefined;
   let config: ReturnType<typeof pluginConfig>;
   let reason = '';
@@ -64,13 +68,12 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
       config = pluginConfig(cfg);
       center = await startCenter({
         config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream,
-        plugin: {
-          paseoHostSelection: () => ({ selected: [...registered].filter(selected), total: registered.size + unidentifiedHosts }),
-        },
+        plugin: { paseoHostSelection },
         afterBatch: enforceLimit, toolUsage: () => storage?.status(),
         openDatabase: path => openPluginDatabase(cfg, path, fresh),
       });
       storage = new ToolStorage(center.db);
+      for (const notify of centerReady) notify();
       enforceLimit();
       reason = '';
       canStartFresh = false;
@@ -82,6 +85,15 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     return starting;
   }
   void boot();
+  registerBoard(server, {
+    center: async () => {
+      await starting;
+      return center ? { db: center.db, feed: center.feed, sources: { config: { ...config, paseoHostSelection }, startedAt, upstream, toolUsage: () => storage?.status() } }
+        : { reason: reason || '中心尚未就绪' };
+    },
+    now: () => new Date(),
+    whenReady: listen => { centerReady.add(listen); return () => { centerReady.delete(listen); }; },
+  });
   server.handle(modelSettings, input => {
     if (!center) throw new Error('中心尚未就绪');
     return manageModels(center, input);

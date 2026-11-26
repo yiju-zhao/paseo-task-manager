@@ -35,4 +35,4 @@ const optionalCheckout = {
 await build({ entryPoints: ['server/plugin.ts'], bundle: true, format: 'esm', platform: 'node', target: 'node26', external, define: { CHECKOUT_WEB_DIR: JSON.stringify(resolve('../dist/web')) }, plugins: [checkout, optionalCheckout],
   outfile: 'server/bundle.mjs' });
 await build({ entryPoints: ['client/plugin.tsx'], bundle: true, format: 'esm', platform: 'browser', jsx: 'automatic',
-  external: [...external, 'react', 'react/jsx-runtime', 'react-native'], outfile: 'client/bundle.mjs' });
+  external: [...external, 'react', 'react/jsx-runtime', 'react-native', '@tanstack/react-query'], outfile: 'client/bundle.mjs' });

@@ -41,7 +41,7 @@ export function readFeedState(db: DatabaseSync, now: Date, status: SchedulerStat
     r.title,
     r.machine,
     r.content_owner,
-    (ctx.observations.get(r.key) ?? []).map((o) => [o.source_id, o.live_status, o.lifecycle, o.fresh, o.content_state, o.gaps]),
+    (ctx.observations.get(r.key) ?? []).map((o) => [o.source_id, o.live_status, o.lifecycle, o.fresh, o.content_state, o.gaps, o.checkpoint]),
   ]);
   const offline = [...ctx.sources.values()]
     .filter((src) => !sourceAlive(src, now))
@@ -87,14 +87,16 @@ export class ChangeFeed {
   private readonly now: () => Date;
   private readonly status: () => SchedulerStatus;
   private readonly intervalMs: number;
+  private readonly boardStatus?: () => unknown;
   private readonly listeners = new Set<(msg: StreamMessage) => void>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private state: FeedState | null = null;
 
-  constructor(db: DatabaseSync, opts: { now?: () => Date; status: () => SchedulerStatus; intervalMs?: number }) {
+  constructor(db: DatabaseSync, opts: { now?: () => Date; status: () => SchedulerStatus; intervalMs?: number; boardStatus?: () => unknown }) {
     this.db = db;
     this.now = opts.now ?? (() => new Date());
     this.status = opts.status;
+    this.boardStatus = opts.boardStatus;
     this.intervalMs = opts.intervalMs ?? 1000;
   }
 
@@ -119,6 +121,7 @@ export class ChangeFeed {
     let messages: StreamMessage[];
     try {
       const next = readFeedState(this.db, this.now(), this.status());
+      if (this.boardStatus) next.status += JSON.stringify(this.boardStatus());
       messages = this.state === null ? [] : diffFeed(this.db, this.state, next);
       this.state = next;
     } catch (err) {

@@ -34,6 +34,7 @@ export type CenterOptions = {
 export type RunningCenter = {
   db: DatabaseSync;
   port: number;
+  feed: ChangeFeed;
   settings: Settings;
   status(): SchedulerStatus;
   stop(): Promise<void>;
@@ -87,7 +88,7 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
     }
     const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm, plugin, upstream, toolUsage, afterBatch });
     const status = () => scheduler?.status() ?? disabledStatus();
-    const feed = new ChangeFeed(database, { status });
+    const feed = new ChangeFeed(database, { status, boardStatus: plugin ? () => [plugin.paseoHostSelection(), toolUsage?.()] : undefined });
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.listen });
     const stream = attachStream(server as Server, feed);
     let address: number;
@@ -128,7 +129,7 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
         }
       }
     }
-    return { db: database, port: address, settings, status, stop: () => stopping ??= shutdown() };
+    return { db: database, feed, port: address, settings, status, stop: () => stopping ??= shutdown() };
   } catch (err) {
     db?.close();
     guard?.close();
