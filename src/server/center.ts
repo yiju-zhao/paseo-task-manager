@@ -9,7 +9,7 @@ import { agentSdkRunner } from '../understand/agent-sdk.ts';
 import { jevDecider } from '../understand/decider.ts';
 import type { LlmRunner } from '../understand/llm.ts';
 import { Scheduler } from '../understand/scheduler.ts';
-import { disabledStatus } from '../understand/status.ts';
+import { disabledStatus, type SchedulerStatus } from '../understand/status.ts';
 import { ChangeFeed } from './change-feed.ts';
 import { understandingSettings, type ServerConfig } from './config.ts';
 import type { MergeLlm } from './merge-routes.ts';
@@ -31,7 +31,13 @@ export type CenterOptions = {
   openDatabase?: typeof openDb;
 };
 
-export type RunningCenter = { db: DatabaseSync; port: number; stop(): Promise<void> };
+export type RunningCenter = {
+  db: DatabaseSync;
+  port: number;
+  settings: Settings;
+  status(): SchedulerStatus;
+  stop(): Promise<void>;
+};
 
 function readTokenFile(path: string): string {
   let token: string;
@@ -80,7 +86,8 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
       }
     }
     const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm, plugin, upstream, toolUsage, afterBatch });
-    const feed = new ChangeFeed(database, { status: () => scheduler?.status() ?? disabledStatus() });
+    const status = () => scheduler?.status() ?? disabledStatus();
+    const feed = new ChangeFeed(database, { status });
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.listen });
     const stream = attachStream(server as Server, feed);
     let address: number;
@@ -120,7 +127,7 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
         }
       }
     }
-    return { db: database, port: address, stop: () => stopping ??= shutdown() };
+    return { db: database, port: address, settings, status, stop: () => stopping ??= shutdown() };
   } catch (err) {
     db?.close();
     guard?.close();

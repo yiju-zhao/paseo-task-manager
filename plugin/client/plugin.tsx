@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useHosts, usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
 import { StorageSettings } from './storage.tsx';
+import { ModelSettings } from './models.tsx';
 import { registerHost } from './register-host.ts';
 import type { HostDirectory } from '@getpaseo/client';
 import { centerStatus, importProgress, settings } from '../shared/settings.ts';
@@ -118,6 +119,7 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
   const ids = known.flatMap(h => h.serverId ? [h.serverId] : []);
   return <>
     <DatabaseSettings />
+    <ModelSettings />
     <StorageSettings key={prefs.values.toolLimit} limit={prefs.values.toolLimit} saving={prefs.saving}
       save={toolLimit => void prefs.save({ ...prefs.values, toolLimit }, prefs.revision)} />
     <SettingsSection title="采集机器">

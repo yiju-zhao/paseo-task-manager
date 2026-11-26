@@ -7,6 +7,7 @@ import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
 import { ToolStorage } from '../../src/server/tool-storage.ts';
+import { modelSettings } from '../shared/models.ts';
 import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { HistoryImport } from './collector/history-import.ts';
@@ -17,6 +18,7 @@ import { StateDir } from './collector/state-store.ts';
 import { pluginPaths } from './config.ts';
 import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
 import { inProcessClient } from './in-process.ts';
+import { manageModels } from './models.ts';
 import { openSource, optionalFileCounter } from './route.ts';
 import { selectSource } from './sources.ts';
 import { upstreamReader } from './upstream.ts';
@@ -73,6 +75,10 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     return starting;
   }
   void boot();
+  server.handle(modelSettings, input => {
+    if (!center) throw new Error('中心尚未就绪');
+    return manageModels(center, input);
+  });
   server.handle(storageState, async ({ previewLimit }) => {
     if (!storage || !settingsReady) return null;
     const preview = previewLimit === undefined ? undefined : await storage.preview(previewLimit);

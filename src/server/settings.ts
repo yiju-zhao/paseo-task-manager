@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
+import { CREDENTIAL_MODES, LLM_ROLES } from '../shared/model-settings.ts';
 import type { ServerConfig } from './config.ts';
 import { understandingSettings } from './config.ts';
 
@@ -10,7 +11,7 @@ import { understandingSettings } from './config.ts';
 // in `secretsDir` (next to the server config, mode 0600), read at each call, and never sent back to a browser (only
 // their last four characters, to recognize them).
 
-export const LLM_ROLES = ['digest', 'curate', 'restage'] as const;
+export { CREDENTIAL_MODES, LLM_ROLES };
 export type LlmRole = (typeof LLM_ROLES)[number];
 
 export const ROLE_LABEL: Record<LlmRole, { label: string; detail: string }> = {
@@ -33,7 +34,6 @@ export const ModelId = z.string().regex(/^[A-Za-z0-9._:[\]-]{1,100}$/, 'a model 
  * `login`: the Claude Code login of the center's machine (subscription). `oauth_token`: a `claude setup-token` token
  * (subscription). `api_key`: an Anthropic API key (billed per token to that API account).
  */
-export const CREDENTIAL_MODES = ['login', 'oauth_token', 'api_key'] as const;
 export type CredentialMode = (typeof CREDENTIAL_MODES)[number];
 
 export type Credential = { mode: 'login' } | { mode: 'oauth_token'; token: string } | { mode: 'api_key'; key: string };
@@ -160,8 +160,9 @@ export class Settings {
       const v = this.readSecret(kind);
       if (v !== null) stored[kind] = v.slice(-4);
     }
-    const origin: ProviderView['origin'] =
-      chosen !== undefined && chosen === active.mode ? 'settings' : active.mode === 'oauth_token' ? 'config' : 'default';
+    let origin: ProviderView['origin'] = 'default';
+    if (chosen === 'login' || (chosen && stored[chosen] !== undefined)) origin = 'settings';
+    else if (active.mode === 'oauth_token') origin = 'config';
     return { mode: active.mode, origin, stored };
   }
 
@@ -195,6 +196,14 @@ export class Settings {
     // It was the active one: back to the default (the config's token file, else the login).
     if (this.read<{ mode: CredentialMode }>('provider')?.mode === kind) this.db.prepare(`DELETE FROM settings WHERE key = 'provider'`).run();
     return this.provider();
+  }
+
+  callsLastWeek(): Array<{ role: LlmRole; calls: number; failures: number }> {
+    const now = this.clock();
+    const since = new Date(now.getTime() - 7 * 86400_000);
+    return this.db.prepare(`SELECT role, count(*) AS calls, sum(ok = 0) AS failures
+      FROM llm_runs WHERE ts BETWEEN ? AND ? GROUP BY role`).all(since.toISOString(), now.toISOString()) as
+      Array<{ role: LlmRole; calls: number; failures: number }>;
   }
 
   view(): SettingsView {
