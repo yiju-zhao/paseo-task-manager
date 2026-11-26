@@ -54,17 +54,3 @@ test('nothing is read until the panel is opened; then each source shows what it 
   const paseo = within(screen.getByRole('listitem', { name: 'paseo-mini' })).getByRole('list', { name: '缺口' }).textContent!;
   for (const part of ['1 个 session 没有任何正文', '5 个未加载（只有元数据）', '1 个仍在补采', '历史不可读 2 处', '3/10 段有消息在采集时被截断', '采集器还有 4 批未送达']) expect(paseo).toContain(part);
 });
-
-test('A retired source remains visible without contributing to the coverage warnings.', async () => {
-  fetchMock.mockResolvedValue(new Response(JSON.stringify([
-    source({ source_id: 'herdr:fixture', state: 'retired', last_error: 'old error' }),
-  ])));
-  render(<CoveragePanel now={NOW} />);
-  const panel = screen.getByText('采集覆盖核验').closest('details')!;
-  panel.open = true;
-  fireEvent(panel, new Event('toggle'));
-  const retired = await screen.findByRole('listitem', { name: 'herdr:fixture' });
-  expect(retired.textContent).toContain('已退役');
-  expect(panel.querySelector('summary')!.textContent).toContain('1 个来源 · 未发现已知缺口');
-  expect(within(retired).queryByRole('button')).toBeNull();
-});

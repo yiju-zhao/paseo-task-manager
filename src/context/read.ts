@@ -49,7 +49,6 @@ type SessionOutline = Turn & {
 type Overview = {
   sources: { id: string; state: string; last_sync: string | null }[];
   healthySources: number;
-  retiredSources: number;
   undigested: number;
   refusals: number;
   pending: Pending[];
@@ -115,16 +114,23 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
     GROUP BY project_id ORDER BY max(id) DESC`,
     )
     .all(cursor?.last_event_id ?? dayAgo) as ChangeSummary[];
+  const monitored = sources?.config.selectedPaseoHosts && configured ? JSON.stringify([...configured.keys()]) : null;
+  const gaps = db.prepare(`WITH observed AS (
+      SELECT session_key FROM session_sources WHERE source_id IN (SELECT value FROM json_each($sources))
+    )
+    SELECT (SELECT count(DISTINCT session_key) FROM (${PENDING_DIGEST_CHUNKS})
+              WHERE $sources IS NULL OR session_key IN observed) AS undigested,
+           (SELECT count(*) FROM digest_blocks WHERE $sources IS NULL OR session_key IN observed) AS refusals`)
+    .get({ sources: monitored })!;
   return {
-    sources: coverage.filter(source => source.state !== 'ok' && source.state !== 'retired'),
-    retiredSources: rows.filter(row => row.retired_at !== null).length,
+    sources: coverage.filter(source => source.state !== 'ok'),
     healthySources: coverage.filter(source => source.state === 'ok').length,
     pending,
     running,
     changes,
     last_event_id: Number(db.prepare('SELECT coalesce(max(id), 0) n FROM events').get()!.n),
-    undigested: Number(db.prepare(`SELECT count(DISTINCT session_key) n FROM (${PENDING_DIGEST_CHUNKS})`).get()!.n),
-    refusals: Number(db.prepare('SELECT count(*) n FROM digest_blocks').get()!.n),
+    undigested: Number(gaps.undigested),
+    refusals: Number(gaps.refusals),
   };
 }
 

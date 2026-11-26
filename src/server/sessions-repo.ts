@@ -244,10 +244,6 @@ export function insertChunks(
   const receivedAt = now.toISOString();
   const sourceId = herdrSourceId(push.machine);
   return transaction(db, () => {
-    if (push.chunks.length) {
-      db.prepare('UPDATE ingest_sources SET retired_at = NULL, collector_heartbeat = ? WHERE source_id = ? AND retired_at IS NOT NULL')
-        .run(receivedAt, sourceId);
-    }
     const insert = db.prepare(
       `INSERT OR IGNORE INTO chunks
          (session_key, kind, offset_start, offset_end, ts_start, ts_end, text, backfill, received_at, source_id)

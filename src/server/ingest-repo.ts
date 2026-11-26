@@ -81,7 +81,7 @@ export function acquireLease(db: DatabaseSync, src: PaseoSource, req: LeaseReque
     const rev = same ? row.snapshot_rev : 0;
     db.prepare(
       `UPDATE ingest_sources SET lease_instance = ?, lease_epoch = ?, lease_expires_at = ?, snapshot_rev = ?,
-         collector_version = ?, collector_heartbeat = ?, retired_at = NULL WHERE source_id = ?`,
+         collector_version = ?, collector_heartbeat = ? WHERE source_id = ?`,
     ).run(req.instance_id, epoch, expires, rev, req.collector_version, now.toISOString(), src.sourceId);
     return { lease_epoch: epoch, expires_at: expires, snapshot_rev: rev };
   });
@@ -95,9 +95,7 @@ function checkLease(db: DatabaseSync, src: PaseoSource, instance: string, epoch:
   if (row === undefined || row.lease_instance !== instance || row.lease_epoch !== epoch) {
     throw new IngestError(409, 'stale_lease', `this instance does not hold the lease of source ${src.sourceId}`);
   }
-  db.prepare(`UPDATE ingest_sources SET lease_expires_at = ?,
-    collector_heartbeat = CASE WHEN retired_at IS NOT NULL THEN ? ELSE collector_heartbeat END,
-    retired_at = NULL WHERE source_id = ?`).run(new Date(now.getTime() + LEASE_TTL_MS).toISOString(), now.toISOString(), src.sourceId);
+  db.prepare('UPDATE ingest_sources SET lease_expires_at = ? WHERE source_id = ?').run(new Date(now.getTime() + LEASE_TTL_MS).toISOString(), src.sourceId);
   return row;
 }
 

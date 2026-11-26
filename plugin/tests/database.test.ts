@@ -27,6 +27,7 @@ test('First startup writes a private loopback configuration with distinct valid 
   expect(statSync(dirname(paths.configPath)).mode & 0o777).toBe(0o700);
   expect(statSync(paths.configPath).mode & 0o777).toBe(0o600);
   expect(JSON.parse(readFileSync(paths.configPath, 'utf8'))).not.toHaveProperty('dbPath');
+  expect(JSON.parse(readFileSync(paths.configPath, 'utf8'))).not.toHaveProperty('collectors');
   expect(pluginConfig(paths)).toEqual(cfg);
 });
 

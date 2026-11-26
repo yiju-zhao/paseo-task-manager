@@ -6,7 +6,6 @@ import { useApi } from '../use-api.ts';
 
 const STATE_LABEL: Record<SourceCoverage['state'], string> = {
   never_reported: '已配置，但从未上报',
-  retired: '已退役',
   offline: '采集器离线',
   daemon_down: 'daemon 未连接',
   ok: '在线',
@@ -50,7 +49,7 @@ function shortfalls(s: SourceCoverage): string[] {
 export function CoveragePanel({ now }: { now: Date }) {
   const [open, setOpen] = useState(false);
   const { data, error, reload } = useApi<SourceCoverage[]>(open ? '/coverage' : null, ['sessions'], { auth: true });
-  const attention = (data ?? []).filter((s) => s.state !== 'retired' && (s.state !== 'ok' || shortfalls(s).length > 0)).length;
+  const attention = (data ?? []).filter((s) => s.state !== 'ok' || shortfalls(s).length > 0).length;
   return (
     <details className="coverage" onToggle={(e) => setOpen(e.currentTarget.open)}>
       <summary>
@@ -68,11 +67,6 @@ export function CoveragePanel({ now }: { now: Date }) {
           <p className="dim">这里统计的是已经到达中心的内容。采集器从未见过的 session 无法计数，见每个来源下的「采集不到的范围」。</p>
           <ul className="coverage-list">
             {data.map((s) => {
-              if (s.state === 'retired') return (
-                <li key={s.source_id} aria-label={s.source_id} className="coverage-card">
-                  <strong>{s.source_id}</strong> · {s.kind} · {s.machine} · {STATE_LABEL.retired}
-                </li>
-              );
               const issues = shortfalls(s);
               const tone = s.state === 'never_reported' || s.state === 'offline' ? 'bad' : s.state !== 'ok' || issues.length > 0 ? 'warn' : 'ok';
               return (

@@ -4,20 +4,23 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { afterEach, expect, test, vi } from 'vitest';
+import { openDb } from '../../src/server/db.ts';
 import { config } from '../../tests/helpers/center.ts';
 import { FakePaseo, FAKE_SERVER_ID } from './helpers/fake-paseo.ts';
 import contribute from '../server/plugin.ts';
 
 const remove = vi.fn();
+const remoteHosts: { serverId: string; label: string; enabled: boolean; status: string }[] = [];
 let sdk: FakePaseo;
 vi.mock('@getpaseo/client', () => ({ createPaseoClient: () => ({
-  connect: async () => {}, close: async () => {}, hosts: { remove, list: async () => ({ self: { serverId: FAKE_SERVER_ID, label: 'Local' }, hosts: [] }) },
+  connect: async () => {}, close: async () => {}, hosts: { remove, list: async () => ({ self: { serverId: FAKE_SERVER_ID, label: 'Local' }, hosts: remoteHosts }) },
 }) }));
 vi.mock('../server/route.ts', () => ({
   optionalFileCounter: () => async () => 0, openSource: async () => ({ sdk }),
 }));
 const dirs: string[] = [];
 afterEach(() => {
+  remoteHosts.length = 0;
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -42,7 +45,7 @@ async function prepare() {
   vi.stubEnv('XDG_CONFIG_HOME', dir);
   vi.stubEnv('XDG_STATE_HOME', join(dir, 'state'));
   vi.stubGlobal('CHECKOUT_WEB_DIR', dir);
-  writeFileSync(join(conf, 'config.json'), JSON.stringify({ ...config, port: address.port, dbPath: join(dir, 'data', 'center.db'), understanding: { enabled: false } }));
+  writeFileSync(join(conf, 'config.json'), JSON.stringify({ ...config, collectors: undefined, port: address.port, dbPath: join(dir, 'data', 'center.db'), understanding: { enabled: false } }));
   return `http://127.0.0.1:${address.port}/status`;
 }
 
@@ -87,6 +90,29 @@ test('Deselecting the host stops its collector and preserves the registration.',
     deselect();
     await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
     expect(remove).not.toHaveBeenCalled();
+  } finally {
+    await cleanup();
+  }
+});
+
+test('A stale selection disappears from coverage when its host leaves the daemon directory.', async () => {
+  const endpoint = await prepare();
+  const db = openDb(join(dirs[0], 'data', 'center.db'));
+  db.prepare("INSERT INTO ingest_sources(source_id,kind,machine,server_id) VALUES ('old','paseo','fixture','removed')").run();
+  db.close();
+  remoteHosts.push({ serverId: 'registered', label: 'fixture', enabled: true, status: 'offline' });
+  const cleanup = contribute({
+    registerSettings: definition => ({
+      read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts: ['removed', 'registered'] }) }),
+      subscribe: () => () => {},
+    }),
+    handle: () => {},
+  });
+  try {
+    await vi.waitFor(async () => {
+      const res = await fetch(new URL('/coverage', endpoint), { headers: { authorization: 'Bearer ' + config.userToken } });
+      expect(await res.json()).toMatchObject([{ source_id: 'paseo-fixture' }]);
+    });
   } finally {
     await cleanup();
   }

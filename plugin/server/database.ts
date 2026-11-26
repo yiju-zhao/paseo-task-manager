@@ -26,7 +26,7 @@ export function pluginConfig(paths: Paths) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = join(dir, 'config-' + randomUUID() + '.tmp');
     const config = { port: 7718, listen: '127.0.0.1', userToken: randomBytes(32).toString('hex'),
-      mcpToken: randomBytes(32).toString('hex'), collectors: {} };
+      mcpToken: randomBytes(32).toString('hex') };
     writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
     try {
       linkSync(tmp, paths.configPath);
@@ -36,10 +36,10 @@ export function pluginConfig(paths: Paths) {
       unlinkSync(tmp);
     }
   }
-  const config = loadServerConfig(paths.configPath, () => {
+  const config = loadServerConfig(paths.configPath, { defaultDatabase: () => {
     mkdirSync(paths.stateRoot, { recursive: true, mode: 0o700 });
     return join(paths.stateRoot, 'task-manager.db');
-  });
+  } });
   checkStoragePath(config.dbPath, paths.daemonHome);
   if (config.dbPath === ':memory:') throw new DatabaseProblem('插件需要持久化数据库路径');
   if (!existsSync(dirname(config.dbPath))) throw new DatabaseProblem('数据库上级目录不存在：' + dirname(config.dbPath));

@@ -5,11 +5,9 @@ import { createPaseoClient } from '@getpaseo/client';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
-import { sourceState } from '../../src/server/coverage.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
-import { setSourceRetired, type SourceRow } from '../../src/server/sources-repo.ts';
 import { ToolStorage } from '../../src/server/tool-storage.ts';
-import { centerStatus, importProgress, storageState, settings, sourceDirectory, type Preferences } from '../shared/settings.ts';
+import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { HistoryImport } from './collector/history-import.ts';
 import { PaseoCollector } from './collector/loop.ts';
@@ -43,7 +41,8 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   let stopped = false;
   let pending = false;
   let current: Promise<void> | undefined;
-  const selected = (id: string) => !stopped && prefs.selectedHosts.includes(id);
+  let registered = new Set([cfg.daemonServerId]);
+  const selected = (id: string) => !stopped && registered.has(id) && prefs.selectedHosts.includes(id);
   const log = (s: string) => console.info(s);
   const upstream = upstreamReader(async id => {
     await local.connect();
@@ -59,8 +58,8 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   function boot(fresh = false) {
     if (center || stopped) return;
     starting ??= (async () => {
-      config = Object.assign(pluginConfig(cfg), { selectedPaseoHosts: () => prefs.selectedHosts });
-      center = await startCenter({ config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream, afterBatch: enforceLimit, toolUsage: () => storage?.status(),
+      config = pluginConfig(cfg);
+      center = await startCenter({ config, plugin: { selectedPaseoHosts: () => prefs.selectedHosts.filter(selected) }, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream, afterBatch: enforceLimit, toolUsage: () => storage?.status(),
         openDatabase: path => openPluginDatabase(cfg, path, fresh) });
       storage = new ToolStorage(center.db);
       enforceLimit();
@@ -78,16 +77,6 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     if (!storage || !settingsReady) return null;
     const preview = previewLimit === undefined ? undefined : await storage.preview(previewLimit);
     return { ...storage.status(), preview };
-  });
-  server.handle(sourceDirectory, ({ change }) => {
-    if (!center) throw new Error('中心尚未就绪');
-    const now = new Date();
-    if (change) setSourceRetired(center.db, change.sourceId, change.retired, now);
-    const sources = center.db.prepare('SELECT * FROM ingest_sources ORDER BY source_id').all() as SourceRow[];
-    return sources.map(source => ({
-      sourceId: source.source_id, kind: source.kind, machine: source.machine,
-      lastSync: source.last_snapshot_at ?? source.collector_heartbeat, state: sourceState(source, now),
-    }));
   });
   server.handle(centerStatus, async ({ action }) => {
     if (action === 'retry' || (action === 'fresh' && canStartFresh)) await boot(action === 'fresh');
@@ -148,7 +137,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   server.handle(importProgress, () => ({
     lastSync: (center?.db.prepare("SELECT server_id, last_snapshot_at FROM ingest_sources WHERE kind='paseo' AND server_id IS NOT NULL").all() ?? [])
       .map(row => ({ serverId: String(row.server_id), at: row.last_snapshot_at ? String(row.last_snapshot_at) : null })),
-    sources: prefs.selectedHosts.map(serverId => ({
+    sources: prefs.selectedHosts.filter(selected).map(serverId => ({
       serverId, ...(ledgers.get(serverId)?.counts() ?? savedCounts(serverId)),
       ready: workers.get(serverId)?.historyInventoryReady ?? false,
     })),
@@ -168,6 +157,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     await local.connect();
     const hosts = await local.hosts.list();
     if (hosts.self.serverId !== cfg.daemonServerId) throw new Error('local daemon serverId mismatch');
+    registered = new Set([hosts.self.serverId, ...hosts.hosts.flatMap(host => host.serverId ? [host.serverId] : [])]);
     const online = new Set([hosts.self.serverId, ...hosts.hosts.filter(h => h.enabled && h.status === 'online' && h.serverId).map(h => h.serverId)]);
     await Promise.all(prefs.selectedHosts.map(async id => {
       const existing = workers.get(id);

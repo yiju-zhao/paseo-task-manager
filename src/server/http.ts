@@ -19,7 +19,7 @@ import type { Scheduler } from '../understand/scheduler.ts';
 import { disabledStatus } from '../understand/status.ts';
 import type { ServerConfig } from './config.ts';
 import { mountAuthRoutes } from './auth-routes.ts';
-import { sourceCoverage } from './coverage.ts';
+import { sourceCoverage, type SourceConfig } from './coverage.ts';
 import { mountAdminRoutes } from './admin-routes.ts';
 import { mountDomainRoutes, userAuth } from './domain-routes.ts';
 import { mountIngestV2 } from './ingest-v2.ts';
@@ -46,11 +46,12 @@ import { mountWeb } from './web.ts';
  */
 export function createApp(
   db: DatabaseSync,
-  config: ServerConfig,
+  serverConfig: ServerConfig,
   clock: () => Date = () => new Date(),
   newId?: DomainDeps['newId'],
   opts: AppOptions = {},
 ): Hono {
+  const config = { ...serverConfig, ...opts.plugin };
   const scheduler = opts.scheduler ?? null;
   const app = new Hono();
   const reminderSources = { config, startedAt: clock() };
@@ -61,6 +62,11 @@ export function createApp(
     console.error(`agent-pm server: unhandled error in ${c.req.method} ${c.req.path}:`, err);
     return c.json({ error: 'internal' }, 500);
   });
+
+  if (opts.plugin) {
+    app.on(['GET', 'POST'], ['/ingest/snapshot', '/ingest/chunks', '/ingest/offset'], c =>
+      c.json({ error: 'herdr_ingest_disabled', message: 'Paseo 插件不再接收 herdr 上报' }, 410));
+  }
 
   app.post('/ingest/snapshot', async (c) => {
     const push = await readPush(c, db, config, clock, SnapshotPush, (p) => [
@@ -174,7 +180,7 @@ export type SessionListItem = SessionView & { linked_projects: Array<{ id: strin
  * `settings`: the run-time settings (models, provider credential); without one, secrets cannot be set from the UI.
  * `mergeLlm`: the model that drafts merge previews; without one, previews answer `understanding_disabled`.
  */
-export type AppOptions = { afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
+export type AppOptions = { plugin?: Pick<Required<SourceConfig>, 'selectedPaseoHosts'>; afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
 
 /**
  * Authenticates an ingest request, then reads and validates its JSON body. Order: bearer token

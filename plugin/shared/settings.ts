@@ -38,12 +38,3 @@ export const storageState = defineRpc({
   output: z.object({ used: z.number(), limit: z.number(), oldest: z.string().nullable(), blocked: z.boolean(),
     preview: z.object({ used: z.number(), clearBytes: z.number(), oldest: z.string().nullable() }).optional() }).nullable(),
 });
-
-export const sourceDirectory = defineRpc({
-  name: 'sources.directory',
-  input: z.object({ change: z.object({ sourceId: z.string().min(1), retired: z.boolean() }).optional() }),
-  output: z.array(z.object({
-    sourceId: z.string(), kind: z.enum(['herdr', 'paseo']), machine: z.string(), lastSync: z.string().nullable(),
-    state: z.enum(['never_reported', 'offline', 'daemon_down', 'ok', 'retired']),
-  })),
-});

@@ -35,6 +35,6 @@ SDK 缺少内部导出、握手或 RPC 失败、整份 diff 过大时，公开 S
 
 ## 交接和协议
 
-上线时按仓库计划 8 的切换步骤先停独立中心，交接各来源的租约和检查点。插件直接复用根目录 `src/shared/` 的协议以及 HTTP 入库使用的事务函数。独立采集器仍可通过原 HTTP 入口上报。
+上线时按仓库计划 8 的切换步骤先停独立中心，交接各来源的租约和检查点。插件直接复用根目录 `src/shared/` 的协议以及 HTTP 入库使用的事务函数。插件只监控已登记并选中采集的 Paseo 主机。herdr 的历史仍可读取；herdr 采集器的上报入口仅在独立中心模式下可用。
 
 采集器源自 agent-pm 的 `feat/paseo-collector-plugin@82bfb29`。根目录和 `plugin/` 各用自己的 `npm run typecheck`、`npm test` 做验证。

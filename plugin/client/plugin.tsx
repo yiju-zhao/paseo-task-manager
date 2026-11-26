@@ -3,7 +3,6 @@ import type { PluginTheme, RpcOutput } from '@getpaseo/plugin';
 import { useEffect, useState } from 'react';
 import { useHosts, usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
-import { SourceSettings } from './sources.tsx';
 import { StorageSettings } from './storage.tsx';
 import { registerHost } from './register-host.ts';
 import type { HostDirectory } from '@getpaseo/client';
@@ -141,7 +140,6 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
         <SettingsAction label="放弃登记" actionLabel="取消" disabled={adding} onPress={() => setForm(undefined)} />
       </View>}
     </SettingsSection>
-    <SourceSettings />
     <SettingsSection title="会话内容">
       <SettingsSwitch label="读取已关闭和已归档 session 的内容" hint={description} disabled={prefs.saving} value={readClosed}
         onValueChange={value => void prefs.save({ ...prefs.values, readClosed: value }, prefs.revision)} />
