@@ -58,7 +58,7 @@ test('Reloading the contribution releases the previous listener, subscriptions a
         read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({}) }),
         subscribe: () => unsubscribe,
       }),
-      handle: () => {},
+      handle: () => {}, addHook: () => () => {},
     });
     try {
       await vi.waitFor(async () => expect((await fetch(endpoint)).ok).toBe(true));
@@ -83,7 +83,7 @@ test('Deselecting the host stops its collector and preserves the registration.',
         return () => {};
       },
     }),
-    handle: () => {},
+    handle: () => {}, addHook: () => () => {},
   });
   try {
     await vi.waitFor(() => expect(sdk.status).toBe('connected'));
@@ -106,7 +106,7 @@ test('A stale selection disappears from coverage when its host leaves the daemon
       read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts: ['removed', 'registered'] }) }),
       subscribe: () => () => {},
     }),
-    handle: () => {},
+    handle: () => {}, addHook: () => () => {},
   });
   try {
     await vi.waitFor(async () => {
@@ -131,7 +131,7 @@ test.each([
       read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts }) }),
       subscribe: () => () => {},
     }),
-    handle: () => {},
+    handle: () => {}, addHook: () => () => {},
   });
   try {
     await vi.waitFor(async () => {

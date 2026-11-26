@@ -143,7 +143,7 @@ B5a → B5b → B18 → B6 → B17。
 
 **目的**：从看板打开一个能读全部 context 的 agent，回答问题、在需要时指挥其他 agent。设计见设计文档第七节。
 
-**设置**：设置页的"模型"一节加"总管"一项：provider 和模型，默认 Claude 的 `claude-opus-5-5`，可改为 Codex 等本机可用的 provider。存储同 B14，走现有的 `settings.ts`。
+**设置**：设置页的"模型"一节加"总管"一项：provider 和模型，使用 Claude，默认模型 `claude-opus-5-5`。Paseo 0.17.3 的 Codex 只读沙箱可以执行命令，逐 agent 配置不接受关闭 shell 的开关，设置页说明原因。存储同 B14，走现有的 `settings.ts`。
 
 **入口**
 
@@ -155,18 +155,19 @@ B5a → B5b → B18 → B6 → B17。
 - 工作目录：插件状态目录下的 `steward/`，不存在就新建，权限 700。
 - 标题"总管"，标签 `task-manager/role: steward`。
 - provider 和模型取自设置。
-- 不能执行命令、不能改文件：Claude 用 `config.options.disallowedTools` 禁掉执行命令和写文件的工具；Codex 用只读沙箱（`sandbox_mode: "read-only"`）。
+- 不能执行命令、不能改文件：Claude 使用逐 agent 的主会话工具白名单和 `config.options.disallowedTools`。只保留 Read、Grep、Glob，下列十个看板工具（含外部 agent-pm 的同名工具），以及 Paseo 的 list_hosts、list_workspaces、list_agents、get_agent_status、get_agent_activity、send_agent_prompt、create_agent。
+- 每次 send_agent_prompt 都在发送前检查参数。只允许默认排队或显式 queue；带 sessionMode、interrupt 或 steer 时，向模型返回拒绝原因。
 - 初始消息：用户输入的那句话；留空时为"看一下现在的全局态势，告诉我最需要注意的事"。从项目页进入时，末尾附上项目 ID。
 - 返回 agentId 和 serverId，界面随即用 `navigation.openAgent` 打开它。
 
 **打开时注入**（`server.addHook("agent.open.before")`，只对带 `task-manager/role: steward` 标签的 agent）
 
-- 追加系统提示：角色说明，加上当时的全局态势（`pm_overview` 的文字，读者 ID 用 `steward`）。每次打开都重新生成。
+- 首次打开时注入角色说明和注明生成时间的全局态势快照（`pm_overview` 的文字，读者 ID 用 `steward`）。重开后沿用原会话，由角色说明要求模型在回答每个新问题前刷新态势。
 - 挂上读取工具：`pm_overview`、`pm_get_brief`、`pm_get_project`、`pm_timeline`、`pm_search`、`pm_list_sessions`、`pm_get_session`、`pm_get_turn`、`pm_read_raw`、`pm_report`。用 `defineAgentTool` 包装现有的工具定义，不另写一份。读取走显式路径，可以回源。
 
 **角色说明**（原样使用，可以调整措辞，不要扩写）：
 
-> 你是用户所有项目的总管，负责回答进展问题，并在用户要求时协调其他 agent。开始时附上的"全局态势"是当时的快照；回答前用 pm_* 工具按地址下钻核实，结论后面写上依据的地址。需要让其他 agent 做事时，用 Paseo 的工具（列出 agent、给 agent 发消息、创建 agent），发之前先告诉用户你打算发什么。你不能执行命令，也不能改文件。需要记入看板的结论用 pm_report 上报。
+> 你是用户所有项目的总管，负责回答进展问题，并在用户要求时协调其他 agent。开始时附上的"全局态势"是当时的快照。快照可能已过时，回答用户的每个新问题前，先调用 pm_overview 获取最新态势，再按地址下钻核实，结论后面写上依据的地址。需要让其他 agent 做事时，用 Paseo 的工具（列出 agent、给 agent 发消息、创建 agent），发之前先告诉用户你打算发什么。你不能执行命令，也不能改文件。需要记入看板的结论用 pm_report 上报。
 
 **需要在隔离 daemon 上验证**（任何一项不成立都停下来汇报）
 
@@ -174,12 +175,14 @@ B5a → B5b → B18 → B6 → B17。
 - 禁用执行命令和写文件的工具后，Paseo 自带的工具和插件挂的工具仍然可用。Paseo 自带工具需要在 host 设置里打开"Enable Paseo tools"，隔离 daemon 上要先打开。
 - Claude 和 Codex 两种 provider 各验一次。
 - 没带标签的 agent 拿不到这些工具和提示。
+- 显式重开和 daemon 重启恢复后，模型的工具清单、发消息参数限制和看板读取能力仍然生效。
 
 **测试**
 
 | 用例 | 预期 |
 |---|---|
-| 带总管标签的 agent 打开 | 拿到读取工具和系统提示，提示里有当时的全局态势 |
+| 带总管标签的 Claude agent 首次打开 | 拿到读取工具、角色说明和带生成时间的全局态势快照 |
+| 显式重开或 daemon 重启后恢复 | 工具清单相同，消息参数检查有效，读取可用；回答前主动刷新态势 |
 | 普通 agent 打开 | 什么都不加 |
 | 创建总管（假 Paseo 客户端） | 工作目录、标签、模型、禁用项、初始消息都正确 |
 | 从项目页创建 | 初始消息里有项目 ID |

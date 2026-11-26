@@ -3,6 +3,7 @@ import type { PluginTheme, RpcOutput } from '@getpaseo/plugin';
 import { useEffect, useState } from 'react';
 import { useHosts, usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
+import { StewardScreen } from './steward.tsx';
 import { BoardScreen, BoardSidebar } from './board.tsx';
 import { ProjectScreen, SessionScreen, TurnScreen, WorkspacePanel } from './board-detail.tsx';
 import { BoardSurface } from './board-ui.tsx';
@@ -162,11 +163,13 @@ export default function contribute(client: PluginClientContext) {
     client.addScreen({ id: 'board', title: '任务看板', Component: props =>
       <BoardSurface surface={{ ...props, ...links }}><BoardScreen /></BoardSurface> }),
     ...([{ id: 'project', title: '项目', Screen: ProjectScreen }, { id: 'session', title: '会话', Screen: SessionScreen },
-      { id: 'turn', title: '回合', Screen: TurnScreen }] as const).map(({ id, title, Screen }) =>
+      { id: 'turn', title: '回合', Screen: TurnScreen }, { id: 'ask-steward', title: '问总管', Screen: StewardScreen }] as const).map(({ id, title, Screen }) =>
       client.addScreen({ id, title, Component: props => <BoardSurface surface={{ ...props, ...links }}>
         <Screen key={JSON.stringify(props.params)} {...props} /></BoardSurface> })),
     client.addWorkspacePanel({ id: 'project-brief', title: '项目简报', icon: 'ListTodo', Component: props =>
       <BoardSurface surface={{ ...props, ...links }}><WorkspacePanel {...props} /></BoardSurface> }),
+    client.addCommandCenterItem({ id: 'ask-steward', title: '问总管', context: 'global', icon: 'MessageCircle',
+      onSelect: ({ openScreen }) => openScreen({ screenId: 'ask-steward' }) }),
     client.addCommandCenterItem({ id: 'open-board', title: '打开任务看板', context: 'global', icon: 'Columns3',
       onSelect: ({ openScreen }) => openScreen({ screenId: 'board' }) }),
   ];

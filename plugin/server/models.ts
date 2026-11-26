@@ -5,6 +5,7 @@ import type { modelSettings } from '../shared/models.ts';
 
 export function manageModels(center: RunningCenter, { change }: RpcInput<typeof modelSettings>) {
   const settings = center.settings;
+  if (change?.kind === 'steward') settings.setStewardModel({ provider: change.provider, model: change.model });
   if (change?.kind === 'model') settings.setModels({ [change.role]: change.model });
   if (change?.kind === 'provider') settings.setProvider(change.mode, change.secret);
   const { roles, models, model_options, provider } = settings.view();
@@ -15,6 +16,6 @@ export function manageModels(center: RunningCenter, { change }: RpcInput<typeof 
       const recent = usage.find(row => row.role === role);
       return { role, label, model: models[role], calls: recent?.calls ?? 0, failures: recent?.failures ?? 0 };
     }),
-    model_options, provider, enabled, pause_reason, paused_until,
+    steward: settings.stewardModel(), model_options, provider, enabled, pause_reason, paused_until,
   };
 }

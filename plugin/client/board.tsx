@@ -81,7 +81,8 @@ export function BoardScreen(): ReactElement {
   const since = useQuery({ queryKey: ['panel-visit', host.id], queryFn: () => read({ markRead: true }),
     enabled: !!overview.data && 'value' in overview.data, staleTime: Infinity, gcTime: 0, refetchOnMount: 'always', retry: false });
   return <Page>
-    <View style={row}>{tabs.map(t => <Action key={t} label={t} selected={tab === t} onPress={() => setTab(t)} />)}<WriteButton label="立即同步" run={() => sync({})} saved="已请求同步" /></View>
+    <View style={{ flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}><View style={{ ...row, flex: 1 }}>{tabs.map(t => <Action key={t} label={t} selected={tab === t} onPress={() => setTab(t)} />)}<WriteButton label="立即同步" run={() => sync({})} saved="已请求同步" /></View>
+      <Action label="问总管" onPress={() => openScreen({ screenId: 'ask-steward' })} /></View>
     {tab === '看板' ? <ProjectBoard /> : <Read query={overview}>{({ overview: snapshot, targets, at, machines, usage }) => {
       if (tab === '待处理') return <>
         <Words tone="title">待处理 · {snapshot.pending.length}</Words>

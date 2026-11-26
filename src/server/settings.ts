@@ -2,7 +2,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { z } from 'zod';
-import { CREDENTIAL_MODES, LLM_ROLES } from '../shared/model-settings.ts';
+import { CREDENTIAL_MODES, LLM_ROLES, type StewardModel } from '../shared/model-settings.ts';
 import type { ServerConfig } from './config.ts';
 import { understandingSettings } from './config.ts';
 
@@ -55,6 +55,7 @@ export type SettingsView = {
   secrets_writable: boolean;
 };
 
+const StewardSelection = z.object({ provider: z.literal('claude'), model: ModelId });
 const SECRET_FILE: Record<'oauth_token' | 'api_key', string> = { oauth_token: 'anthropic-oauth-token', api_key: 'anthropic-api-key' };
 const Secret = z.string().trim().min(20, 'too short to be a token or key').max(500).regex(/^\S+$/, 'must not contain whitespace');
 
@@ -105,6 +106,14 @@ export class Settings {
     }
     this.write('models', current);
     return this.models();
+  }
+
+  stewardModel(): StewardModel {
+    return StewardSelection.parse(this.read<unknown>('steward_model') ?? { provider: 'claude', model: 'claude-opus-5-5' });
+  }
+
+  setStewardModel(selection: StewardModel): void {
+    this.write('steward_model', StewardSelection.parse(selection));
   }
 
   private secretPath(kind: 'oauth_token' | 'api_key'): string | null {

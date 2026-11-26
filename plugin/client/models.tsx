@@ -9,27 +9,27 @@ import { modelSettings } from '../shared/models.ts';
 type View = RpcOutput<typeof modelSettings>;
 type Save = (change: NonNullable<RpcInput<typeof modelSettings>['change']>) => Promise<boolean>;
 
-function RoleModel({ row, options, saving, save }: {
-  row: View['roles'][number]; options: View['model_options']; saving: boolean; save: Save;
+function ModelChoice({ label, model, hint, options, saving, save }: {
+  label: string; model: string; hint: string; options: View['model_options']; saving: boolean; save(model: string): Promise<boolean>;
 }) {
-  const [custom, setCustom] = useState(!options.some(option => option.id === row.model));
-  const [draft, setDraft] = useState(row.model);
+  const [custom, setCustom] = useState(!options.some(option => option.id === model));
+  const [draft, setDraft] = useState(model);
   return <>
-    <SettingsSelect label={row.label}
-      hint={`当前：${row.model} · 最近 7 天调用 ${row.calls} 次，失败 ${row.failures} 次`}
-      value={custom ? '' : row.model} disabled={saving}
+    <SettingsSelect label={label}
+      hint={hint}
+      value={custom ? '' : model} disabled={saving}
       options={[...options.map(option => ({ value: option.id, label: option.label })), { value: '', label: '其他模型 ID' }]}
-      onValueChange={model => {
-        if (!model || model === row.model) {
-          setDraft(row.model);
-          setCustom(!model);
+      onValueChange={choice => {
+        if (!choice || choice === model) {
+          setDraft(model);
+          setCustom(!choice);
         }
-        else void save({ kind: 'model', role: row.role, model });
+        else void save(choice);
       }} />
     {custom && <>
-      <SettingsInput label={row.label + '模型 ID'} initialValue={row.model} onChangeText={setDraft} disabled={saving} />
-      <SettingsAction label={row.label + '自定义模型'} actionLabel="保存模型" disabled={saving || !draft.trim() || draft.trim() === row.model}
-        onPress={() => void save({ kind: 'model', role: row.role, model: draft.trim() })} />
+      <SettingsInput label={label + '模型 ID'} initialValue={model} onChangeText={setDraft} disabled={saving} />
+      <SettingsAction label={label + '自定义模型'} actionLabel="保存模型" disabled={saving || !draft.trim() || draft.trim() === model}
+        onPress={() => void save(draft.trim())} />
     </>}
   </>;
 }
@@ -92,7 +92,7 @@ export function ModelSettings() {
       setState(await rpc({ change }));
       return true;
     } catch {
-      setError(change.kind === 'model' ? '模型未保存，请检查模型 ID 后重试' : '账号未保存，请检查凭据后重试');
+      setError(change.kind !== 'provider' ? '模型未保存，请检查模型 ID 后重试' : '账号未保存，请检查凭据后重试');
       return false;
     } finally {
       setSaving(false);
@@ -104,7 +104,12 @@ export function ModelSettings() {
     {state && <>
       <SettingsRow label={!state.enabled ? '理解层已关闭' : state.paused_until ? '理解层已暂停' : '理解层未暂停'}
         hint={state.paused_until ? state.pause_reason ?? `恢复时间：${new Date(state.paused_until).toLocaleString()}` : undefined} />
-      {state.roles.map(row => <RoleModel key={row.role + ':' + row.model} row={row} options={state.model_options} saving={saving} save={save} />)}
+      {state.roles.map(row => <ModelChoice key={row.role + ':' + row.model} label={row.label} model={row.model}
+        hint={`当前：${row.model} · 最近 7 天调用 ${row.calls} 次，失败 ${row.failures} 次`}
+        options={state.model_options} saving={saving} save={model => save({ kind: 'model', role: row.role, model })} />)}
+      <ModelChoice key={'steward:' + state.steward.model} label="总管" model={state.steward.model} options={state.model_options} saving={saving}
+        hint={'Claude · ' + state.steward.model + '。Codex 的只读沙箱仍能执行命令，当前 Paseo 无法为单个 Codex agent 关闭命令工具。'}
+        save={model => save({ kind: 'steward', provider: 'claude', model })} />
       <Account key={state.provider.mode + ':' + state.provider.origin} provider={state.provider} saving={saving} save={save} />
     </>}
     {error && <SettingsRow label={error} />}

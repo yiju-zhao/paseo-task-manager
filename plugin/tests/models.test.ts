@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
+import { Settings } from '../../src/server/settings.ts';
 import { TICK_MS } from '../../src/understand/scheduler.ts';
 import { config } from '../../tests/helpers/center.ts';
 import { modelSettings } from '../shared/models.ts';
@@ -79,4 +80,14 @@ test('The reported source follows the config token when a previously stored OAut
   manageModels(center, { change: { kind: 'provider', mode: 'oauth_token', secret: 'synthetic-oauth-token-for-fixture' } });
   rmSync(join(dir, 'secrets', 'anthropic-oauth-token'));
   expect(manageModels(center, {}).provider).toMatchObject({ mode: 'oauth_token', origin: 'config', stored: {} });
+});
+
+test('The steward starts with Opus and keeps its chosen Claude model across settings reads.', () => {
+  expect(manageModels(center, {}).steward).toEqual({ provider: 'claude', model: 'claude-opus-5-5' });
+  manageModels(center, { change: { kind: 'steward', provider: 'claude', model: 'claude-sonnet-5-5' } });
+  const settings = new Settings(center.db, config, null);
+  expect(settings.stewardModel()).toEqual({ provider: 'claude', model: 'claude-sonnet-5-5' });
+});
+test('A model update cannot select a provider with command execution for the steward.', () => {
+  expect(modelSettings.input.safeParse({ change: { kind: 'steward', provider: 'codex', model: 'example' } }).success).toBe(false);
 });

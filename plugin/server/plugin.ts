@@ -7,7 +7,7 @@ import type { PluginServerContext } from '@getpaseo/plugin/server';
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
 import { ToolStorage } from '../../src/server/tool-storage.ts';
-import { modelSettings } from '../shared/models.ts';
+import { askSteward, modelSettings } from '../shared/models.ts';
 import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
 import { defaultDeps } from '../../src/domain/types.ts';
 import { registerBoardWrites } from './board-writes.ts';
@@ -21,6 +21,7 @@ import { StateDir } from './collector/state-store.ts';
 import { pluginPaths } from './config.ts';
 import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
 import { inProcessClient } from './in-process.ts';
+import { createSteward, openSteward } from './steward.ts';
 import { manageModels } from './models.ts';
 import { openSource, optionalFileCounter } from './route.ts';
 import { selectSource } from './sources.ts';
@@ -29,7 +30,7 @@ import { RemoteWorkspaces, type UnknownFileCount } from './workspaces.ts';
 
 declare const CHECKOUT_WEB_DIR: string;
 
-export default function contribute(server: Pick<PluginServerContext, 'registerSettings' | 'handle'>) {
+export default function contribute(server: Pick<PluginServerContext, 'registerSettings' | 'handle' | 'addHook'>) {
   const stored = server.registerSettings(settings);
   const cfg = pluginPaths();
   const local = createPaseoClient({ url: cfg.daemonUrl, clientId: 'paseo-task-manager-' + randomUUID(), connectTimeoutMs: 5000 });
@@ -101,6 +102,17 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     },
     now: () => new Date(),
     whenReady: listen => { centerReady.add(listen); return () => { centerReady.delete(listen); }; },
+  });
+  const removeStewardHook = server.addHook('agent.open.before', ({ request }) => openSteward(request, async () => {
+    await starting;
+    if (!center || stopped) throw new Error(reason || '中心尚未就绪');
+    return { db: center.db, deps, sources: { config: { ...config, paseoHostSelection }, startedAt, upstream, toolUsage: () => storage?.status() } };
+  }));
+  server.handle(askSteward, async input => {
+    await starting;
+    if (!center || stopped) throw new Error(reason || '中心尚未就绪');
+    await local.connect();
+    return createSteward(options => local.agents.create(options), cfg.stateRoot, cfg.daemonServerId, center.settings.stewardModel(), input);
   });
   server.handle(modelSettings, input => {
     if (!center) throw new Error('中心尚未就绪');
@@ -228,6 +240,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   const timer = setInterval(refresh, 10_000);
   return async () => {
     stopped = true;
+    removeStewardHook();
     clearInterval(timer);
     await unsubscribe();
     await current;

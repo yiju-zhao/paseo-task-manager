@@ -38,11 +38,12 @@ function LedgerEntry({ entry, title, status, evidence = [], children }: { childr
     {[...new Set([...evidence, ...(entry.checked_ref ? [entry.checked_ref] : [])])].map(ref => <Reference key={ref} address={ref} />)}{children}</Card>;
 }
 
-function ProjectBrief({ project }: { project: BoardProjectCard }): ReactElement {
+function ProjectBrief({ project, action }: { project: BoardProjectCard; action?: ReactNode }): ReactElement {
   const { layout } = useBoard();
   const fields = [['summary', '简报'], ['why', '为什么'], ['done_criteria', '完成标准']] as const;
   return <>
-    <Words tone="title">{project.title}</Words><Words tone="muted">{STAGE_LABEL[project.stage]} · {project.priority ?? '优先级未定'}</Words>
+    <View style={{ ...row, justifyContent: 'space-between' }}><View style={{ flexShrink: 1 }}><Words tone="title">{project.title}</Words></View>{action}</View>
+    <Words tone="muted">{STAGE_LABEL[project.stage]} · {project.priority ?? '优先级未定'}</Words>
     <View style={{ flexDirection: layout.compact ? 'column' : 'row', gap: 12 }}>
       {fields.map(([field, label]) => project[field] && <View key={field} style={{ flexGrow: 1, flexBasis: layout.compact ? 'auto' : 0 }}>
         <Card><Words tone="heading">{label}</Words><Words>{project[field]}</Words>
@@ -60,7 +61,7 @@ export function ProjectScreen({ params }: PluginScreenProps): ReactElement {
     if (!p) return <Words>找不到这个项目</Words>;
     const sessions = new Map(p.contributions.flatMap(c => c.session ? [[c.session.short_id, c.session] as const] : []));
     return <>
-      <ProjectBrief project={p} />
+      <ProjectBrief project={p} action={<Action label="问总管" onPress={() => openScreen({ screenId: 'ask-steward', params: { projectId: p.id, projectTitle: p.title } })} />} />
       <ProjectEditor project={p} /><StageEditor project={p} />{p.stage !== 'merged' && <MergeEditor project={p} />}
       <Words tone="heading">等你的事 · {p.pending_questions.length + p.open_blockers.filter(b => b.kind === 'user').length}</Words>
       {p.pending_questions.map(q => <Card key={q.id}><Words>{q.prompt}</Words>{q.context && <Words>{q.context}</Words>}
