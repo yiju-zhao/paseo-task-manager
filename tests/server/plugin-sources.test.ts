@@ -5,11 +5,11 @@ import { createApp } from '../../src/server/http.ts';
 import { call, config, HERDR_TOKEN, herdrChunks, herdrSession, herdrSnapshot, startCenter, type Center } from '../helpers/center.ts';
 
 let center: Center;
-const sourceConfig = { ...config, selectedPaseoHosts: () => ['selected'] };
+const sourceConfig = { ...config, paseoHostSelection: () => ({ selected: ['selected'], total: 2 }) };
 beforeEach(async () => {
   center = startCenter();
   await call(center, 'POST', '/ingest/snapshot', HERDR_TOKEN, herdrSnapshot([herdrSession('claude:historical')]));
-  center.app = createApp(center.db, config, () => center.now, undefined, { plugin: { selectedPaseoHosts: sourceConfig.selectedPaseoHosts } });
+  center.app = createApp(center.db, config, () => center.now, undefined, { plugin: { paseoHostSelection: sourceConfig.paseoHostSelection } });
 });
 afterEach(() => center.close());
 

@@ -98,13 +98,13 @@ function cutCounts(db: DatabaseSync, sourceId: string): { truncated_chunks: numb
   return out;
 }
 
-export type SourceConfig = Pick<ServerConfig, 'collectors' | 'paseoCollectors'> & { selectedPaseoHosts?: () => string[] };
+export type SourceConfig = Pick<ServerConfig, 'collectors' | 'paseoCollectors'> & { paseoHostSelection?: () => { selected: string[]; total: number } };
 
 export function configuredSources(db: DatabaseSync, config: SourceConfig) {
   const configured = new Map<string, { kind: SourceKind; machine: string; createdAt?: string }>();
-  if (config.selectedPaseoHosts) {
+  if (config.paseoHostSelection) {
     const sources = db.prepare("SELECT source_id, machine FROM ingest_sources WHERE kind='paseo' AND server_id IN (SELECT value FROM json_each(?))")
-      .all(JSON.stringify(config.selectedPaseoHosts()));
+      .all(JSON.stringify(config.paseoHostSelection().selected));
     for (const row of sources) configured.set(String(row.source_id), { kind: 'paseo', machine: String(row.machine) });
     return configured;
   }
@@ -132,7 +132,7 @@ export function sourceCoverage(db: DatabaseSync, config: SourceConfig, now: Date
   const configured = configuredSources(db, config);
   const rows = new Map((db.prepare('SELECT * FROM ingest_sources').all() as SourceRow[]).map((r) => [r.source_id, r]));
   const count = (sql: string, ...args: string[]) => (db.prepare(sql).get(...args) as { n: number }).n;
-  const ids = config.selectedPaseoHosts ? [...configured.keys()].sort() : [...new Set([...configured.keys(), ...rows.keys()])].sort();
+  const ids = config.paseoHostSelection ? [...configured.keys()].sort() : [...new Set([...configured.keys(), ...rows.keys()])].sort();
   return ids.map((id): SourceCoverage => {
     const row = rows.get(id);
     const kind = (row?.kind ?? configured.get(id)!.kind) as SourceKind;

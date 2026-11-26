@@ -117,3 +117,45 @@ test('A stale selection disappears from coverage when its host leaves the daemon
     await cleanup();
   }
 });
+
+test.each([
+  { scenario: 'none selected', selectedHosts: [], first: "还没有打开任何机器的采集，在插件设置的'机器'一节打开", last: '另有 2 台机器未打开采集' },
+  { scenario: 'one selected', selectedHosts: [FAKE_SERVER_ID], first: '', last: '另有 1 台机器未打开采集' },
+  { scenario: 'all selected', selectedHosts: [FAKE_SERVER_ID, 'remote'], first: '', last: '' },
+])('The overview describes host coverage with $scenario.', async ({ selectedHosts, first, last }) => {
+  const endpoint = await prepare();
+  sdk = new FakePaseo();
+  remoteHosts.push({ serverId: 'remote', label: 'Remote', enabled: true, status: 'offline' });
+  const cleanup = contribute({
+    registerSettings: definition => ({
+      read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts }) }),
+      subscribe: () => () => {},
+    }),
+    handle: () => {},
+  });
+  try {
+    await vi.waitFor(async () => {
+      const response = await fetch(new URL('/mcp', endpoint), {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + config.mcpToken, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'pm_overview', arguments: {} } }),
+      });
+      const result = await response.json() as { result: { content: { text: string }[] } };
+      const blindSpots = result.result.content[0].text.split('\n\n')[0];
+      if (first) {
+        expect(blindSpots.split('\n')[1]).toBe('- ' + first);
+        expect(blindSpots).not.toContain('个来源正常');
+      } else {
+        expect(blindSpots).not.toContain('还没有打开任何机器的采集');
+        expect(blindSpots).toContain('1 个来源正常');
+      }
+      if (last) expect(blindSpots.split('\n').at(-1)).toBe('- ' + last);
+      else {
+        expect(blindSpots).toContain('paseo-remote');
+        expect(blindSpots).not.toContain('台机器未打开采集');
+      }
+    });
+  } finally {
+    await cleanup();
+  }
+});

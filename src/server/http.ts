@@ -180,7 +180,7 @@ export type SessionListItem = SessionView & { linked_projects: Array<{ id: strin
  * `settings`: the run-time settings (models, provider credential); without one, secrets cannot be set from the UI.
  * `mergeLlm`: the model that drafts merge previews; without one, previews answer `understanding_disabled`.
  */
-export type AppOptions = { plugin?: Pick<Required<SourceConfig>, 'selectedPaseoHosts'>; afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
+export type AppOptions = { plugin?: Pick<Required<SourceConfig>, 'paseoHostSelection'>; afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
 
 /**
  * Authenticates an ingest request, then reads and validates its JSON body. Order: bearer token

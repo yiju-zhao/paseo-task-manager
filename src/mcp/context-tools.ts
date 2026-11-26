@@ -138,14 +138,18 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
         const now = deps.now();
         const overview = readOverview(db, now, reader, sources);
         const usage = sources?.toolUsage?.();
+        const hosts = sources?.config.paseoHostSelection?.();
+        const noneSelected = hosts?.selected.length === 0;
+        const unselected = hosts ? hosts.total - hosts.selected.length : 0;
         const parts = [
           [
             '盲区',
             [
+              ...(noneSelected ? ["还没有打开任何机器的采集，在插件设置的'机器'一节打开"] : []),
               `待摘要会话 ${overview.undigested}，拒摘窗口 ${overview.refusals}`,
               ...(usage ? [`工具详情 ${formatBytes(usage.used)} / ${formatBytes(usage.limit)}，最早保留 ${usage.oldest ?? '无'}${usage.blocked ? '；已处理的详情清完仍超限，请调高上限' : ''}`] : []),
               ...overview.sources.map((s) => `${s.id} · ${s.state} · ${s.last_sync ?? '未同步'}`),
-              `${overview.sources.length ? '其余 ' : ''}${overview.healthySources} 个来源正常`,
+              ...(noneSelected ? [] : [`${overview.sources.length ? '其余 ' : ''}${overview.healthySources} 个来源正常`]),
             ],
             '查看来源覆盖页',
           ],
@@ -169,15 +173,16 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
         ] as const;
         const text = parts
           .map(([title, lines, more]) => {
+            const footer = title === '盲区' && unselected > 0 ? `\n- 另有 ${unselected} 台机器未打开采集` : '';
             let section = title;
             let shown = 0;
             for (const line of lines) {
-              if (section.length + line.length > OVERVIEW_SECTION_CHARS) break;
+              if (section.length + line.length + footer.length > OVERVIEW_SECTION_CHARS) break;
               section += '\n- ' + line;
               shown++;
             }
             if (shown < lines.length) section += `\n省略 ${lines.length - shown} 条，${more}`;
-            return lines.length ? section : section + '\n无';
+            return lines.length ? section + footer : section + '\n无';
           })
           .join('\n\n');
         markOverviewRead(db, reader, now, overview.last_event_id);

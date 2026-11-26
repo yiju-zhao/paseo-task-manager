@@ -44,6 +44,7 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
   let pending = false;
   let current: Promise<void> | undefined;
   let registered = new Set([cfg.daemonServerId]);
+  let unidentifiedHosts = 0;
   const selected = (id: string) => !stopped && registered.has(id) && prefs.selectedHosts.includes(id);
   const log = (s: string) => console.info(s);
   const upstream = upstreamReader(async id => {
@@ -61,8 +62,14 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     if (center || stopped) return;
     starting ??= (async () => {
       config = pluginConfig(cfg);
-      center = await startCenter({ config, plugin: { selectedPaseoHosts: () => prefs.selectedHosts.filter(selected) }, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream, afterBatch: enforceLimit, toolUsage: () => storage?.status(),
-        openDatabase: path => openPluginDatabase(cfg, path, fresh) });
+      center = await startCenter({
+        config, configDir: dirname(cfg.configPath), webDir: CHECKOUT_WEB_DIR, log, upstream,
+        plugin: {
+          paseoHostSelection: () => ({ selected: [...registered].filter(selected), total: registered.size + unidentifiedHosts }),
+        },
+        afterBatch: enforceLimit, toolUsage: () => storage?.status(),
+        openDatabase: path => openPluginDatabase(cfg, path, fresh),
+      });
       storage = new ToolStorage(center.db);
       enforceLimit();
       reason = '';
@@ -159,11 +166,12 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     for (const [id, worker] of workers) {
       if (!selected(id)) await stop(id, worker);
     }
-    if (!prefs.selectedHosts.length || stopped) return;
+    if (stopped) return;
     await local.connect();
     const hosts = await local.hosts.list();
     if (hosts.self.serverId !== cfg.daemonServerId) throw new Error('local daemon serverId mismatch');
     registered = new Set([hosts.self.serverId, ...hosts.hosts.flatMap(host => host.serverId ? [host.serverId] : [])]);
+    unidentifiedHosts = hosts.hosts.filter(host => host.serverId === null).length;
     const online = new Set([hosts.self.serverId, ...hosts.hosts.filter(h => h.enabled && h.status === 'online' && h.serverId).map(h => h.serverId)]);
     await Promise.all(prefs.selectedHosts.map(async id => {
       const existing = workers.get(id);
