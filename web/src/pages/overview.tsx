@@ -61,7 +61,7 @@ function ActionQueue({ coverage, questions, titles, now, reload }: {
   coverage: SourceCoverage[] | undefined; questions: QuestionView[]; titles: Map<string, string>; now: Date; reload(): void;
 }) {
   const { needYou, attribution } = splitQuestions(questions);
-  const faults = (coverage ?? []).filter((s) => s.state !== 'ok');
+  const faults = (coverage ?? []).filter((s) => s.state !== 'ok' && s.state !== 'retired');
   return (
     <Panel title="行动队列" meta={`${needYou.length + attribution.length} 个需要你决策 · 提醒随进展自动更新`} className="queue">
       <div className="queue-group">
@@ -216,7 +216,7 @@ export function OverviewPage() {
   const live = list.filter((s) => LIVE.has(s.effective_status) && !s.ignored);
   const unlinked = live.filter((s) => s.linked_projects.length === 0);
   const reminderCount = useReminderCount();
-  const faults = (coverage.data ?? []).filter((s) => s.state !== 'ok').length;
+  const faults = (coverage.data ?? []).filter((s) => s.state !== 'ok' && s.state !== 'retired').length;
   const a = activity.data;
   const reload = () => {
     projects.reload();

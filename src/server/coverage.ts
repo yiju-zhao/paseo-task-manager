@@ -19,7 +19,7 @@ export type SourceCoverage = {
   /** Named in the server config, or holding an unrevoked herdr collector key made in the UI. */
   configured: boolean;
   /** `never_reported`: configured, but no collector has ever pushed for it. */
-  state: 'never_reported' | 'offline' | 'daemon_down' | 'ok';
+  state: 'never_reported' | 'offline' | 'daemon_down' | 'ok' | 'retired';
   collector_heartbeat: string | null;
   collector_version: string | null;
   daemon_status: string | null;
@@ -120,6 +120,7 @@ export function configuredSources(db: DatabaseSync, config: SourceConfig) {
 export const PENDING_DIGEST_CHUNKS = 'SELECT session_key, source_id FROM chunks WHERE digested = 0 AND digest_block_id IS NULL';
 
 export function sourceState(source: SourceRow | undefined, now: Date): SourceCoverage['state'] {
+  if (source?.retired_at) return 'retired';
   if (!source || source.collector_heartbeat === null) return 'never_reported';
   const health = sourceHealth(source, now);
   if (!health.collectorAlive) return 'offline';

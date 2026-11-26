@@ -50,7 +50,7 @@ export function readFeedState(db: DatabaseSync, now: Date, status: SchedulerStat
   return {
     eventId: m ?? 0,
     questions: `${q.n}|${q.pending}|${q.last ?? ''}|${q.resolved ?? ''}|${q.evidence}`,
-    sessions: JSON.stringify({ sessions, offline }),
+    sessions: JSON.stringify({ sessions, offline, retired: [...ctx.sources.values()].filter(s => s.retired_at).map(s => s.source_id).sort() }),
     status: JSON.stringify(status),
   };
 }

@@ -28,12 +28,20 @@ export type SourceRow = {
   server_id: string | null;
   collector_version: string | null;
   collector_heartbeat: string | null;
+  retired_at: string | null;
   daemon_status: string | null;
   daemon_error: string | null;
   daemon_checked_at: string | null;
   last_snapshot_at: string | null;
   diagnostics: string | null;
 };
+
+export function setSourceRetired(db: DatabaseSync, sourceId: string, retired: boolean, now: Date): void {
+  const result = db.prepare(`UPDATE ingest_sources SET retired_at =
+    CASE WHEN ? THEN coalesce(retired_at, ?) ELSE NULL END WHERE source_id = ?`)
+    .run(Number(retired), now.toISOString(), sourceId);
+  if (result.changes === 0) throw new Error('来源不存在：' + sourceId);
+}
 
 export type SessionSourceRow = {
   source_id: string;
@@ -241,7 +249,7 @@ export function touchSource(
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(source_id) DO UPDATE SET
        kind = excluded.kind, machine = excluded.machine, server_id = coalesce(excluded.server_id, server_id),
-       collector_version = excluded.collector_version, collector_heartbeat = excluded.collector_heartbeat`,
+       collector_version = excluded.collector_version, collector_heartbeat = excluded.collector_heartbeat, retired_at = NULL`,
   ).run(src.source_id, src.kind, src.machine, src.server_id ?? null, src.collector_version, nowIso);
 }
 

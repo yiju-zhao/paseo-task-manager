@@ -49,6 +49,7 @@ type SessionOutline = Turn & {
 type Overview = {
   sources: { id: string; state: string; last_sync: string | null }[];
   healthySources: number;
+  retiredSources: number;
   undigested: number;
   refusals: number;
   pending: Pending[];
@@ -115,7 +116,8 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
     )
     .all(cursor?.last_event_id ?? dayAgo) as ChangeSummary[];
   return {
-    sources: coverage.filter(source => source.state !== 'ok'),
+    sources: coverage.filter(source => source.state !== 'ok' && source.state !== 'retired'),
+    retiredSources: rows.filter(row => row.retired_at !== null).length,
     healthySources: coverage.filter(source => source.state === 'ok').length,
     pending,
     running,

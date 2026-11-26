@@ -169,15 +169,16 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
         ] as const;
         const text = parts
           .map(([title, lines, more]) => {
+            const footer = title === '盲区' ? `\n- 已退役 ${overview.retiredSources} 个` : '';
             let section = title;
             let shown = 0;
             for (const line of lines) {
-              if (section.length + line.length > OVERVIEW_SECTION_CHARS) break;
+              if (section.length + line.length + footer.length > OVERVIEW_SECTION_CHARS) break;
               section += '\n- ' + line;
               shown++;
             }
             if (shown < lines.length) section += `\n省略 ${lines.length - shown} 条，${more}`;
-            return lines.length ? section : section + '\n无';
+            return lines.length ? section + footer : section + '\n无';
           })
           .join('\n\n');
         markOverviewRead(db, reader, now, overview.last_event_id);

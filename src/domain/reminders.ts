@@ -129,9 +129,10 @@ export function listReminders(db: DatabaseSync, now: Date, sources?: ReminderSou
   out.push(...repos.values());
 
   if (sources) {
-    const heartbeat = db.prepare('SELECT collector_heartbeat FROM ingest_sources WHERE source_id=?');
+    const heartbeat = db.prepare('SELECT collector_heartbeat, retired_at FROM ingest_sources WHERE source_id=?');
     for (const [id, source] of configuredSources(db, sources.config)) {
-      const row = heartbeat.get(id) as { collector_heartbeat: string | null } | undefined;
+      const row = heartbeat.get(id) as { collector_heartbeat: string | null; retired_at: string | null } | undefined;
+      if (row?.retired_at) continue;
       const last = row?.collector_heartbeat;
       const since = last ?? source.createdAt ?? sources.startedAt.toISOString();
       if (now.getTime() - Date.parse(since) < SOURCE_REMINDER_AFTER_MS) continue;

@@ -639,6 +639,7 @@ CREATE TRIGGER index_turn_items_insert AFTER INSERT ON turn_items BEGIN INSERT I
   CREATE TRIGGER tool_usage_delete AFTER DELETE ON source_events WHEN OLD.detail_bytes>0 BEGIN
     UPDATE tool_detail_usage SET used=used-OLD.detail_bytes;
   END;`,
+  `ALTER TABLE ingest_sources ADD COLUMN retired_at TEXT;`,
 ];
 
 /** Opens (creating if needed) the central database in WAL mode and applies pending migrations. */

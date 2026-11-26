@@ -5,9 +5,11 @@ import { createPaseoClient } from '@getpaseo/client';
 import type { PluginServerContext } from '@getpaseo/plugin/server';
 
 import { startCenter, type RunningCenter } from '../../src/server/center.ts';
+import { sourceState } from '../../src/server/coverage.ts';
 import type { PaseoSource } from '../../src/server/ingest-repo.ts';
+import { setSourceRetired, type SourceRow } from '../../src/server/sources-repo.ts';
 import { ToolStorage } from '../../src/server/tool-storage.ts';
-import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
+import { centerStatus, importProgress, storageState, settings, sourceDirectory, type Preferences } from '../shared/settings.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { HistoryImport } from './collector/history-import.ts';
 import { PaseoCollector } from './collector/loop.ts';
@@ -76,6 +78,16 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     if (!storage || !settingsReady) return null;
     const preview = previewLimit === undefined ? undefined : await storage.preview(previewLimit);
     return { ...storage.status(), preview };
+  });
+  server.handle(sourceDirectory, ({ change }) => {
+    if (!center) throw new Error('中心尚未就绪');
+    const now = new Date();
+    if (change) setSourceRetired(center.db, change.sourceId, change.retired, now);
+    const sources = center.db.prepare('SELECT * FROM ingest_sources ORDER BY source_id').all() as SourceRow[];
+    return sources.map(source => ({
+      sourceId: source.source_id, kind: source.kind, machine: source.machine,
+      lastSync: source.last_snapshot_at ?? source.collector_heartbeat, state: sourceState(source, now),
+    }));
   });
   server.handle(centerStatus, async ({ action }) => {
     if (action === 'retry' || (action === 'fresh' && canStartFresh)) await boot(action === 'fresh');
