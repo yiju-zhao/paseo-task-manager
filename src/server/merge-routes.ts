@@ -1,13 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite';
-import type { Context, Hono, MiddlewareHandler } from 'hono';
+import type { Hono, MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
-import { z } from 'zod';
+import type { z } from 'zod';
+import { MergeApproval, MergeSelection } from '../shared/board-writes.ts';
 import { readLocks, readRow } from '../domain/changes.ts';
 import { execute } from '../domain/execute.ts';
 import { currentSignature, DRAFT_FIELDS, evidenceSessions, mergePlan, mergeSignature, previewScope, resolveMergeScope } from '../domain/merge.ts';
 import type { DraftField, MergePlan, MergeScope, PreviewScopeRow } from '../domain/merge.ts';
 import { OpRejected } from '../domain/types.ts';
-import type { DomainDeps, OpResult, RejectCode } from '../domain/types.ts';
+import type { DomainDeps, OpResult } from '../domain/types.ts';
 import { MAX_BODY_BYTES, readBody, rejectStatus } from './domain-routes.ts';
 import type { LlmRunner } from '../understand/llm.ts';
 import { draftMerge } from '../understand/merge-preview.ts';
@@ -44,9 +45,6 @@ export type MergePreviewView = {
 
 type Row = PreviewScopeRow & { id: string; status: MergePreviewView['status']; signature: string; draft: string | null; coverage: string | null; error: string | null; created_at: string };
 
-const Create = z.object({ target: z.string().min(1), sessions: z.array(z.string().min(1)).max(500).optional() }).strict();
-const Apply = z.object({ overwrite_locked: z.array(z.string()).optional() }).strict();
-
 function sessionLabel(db: DatabaseSync, key: string): string {
   const s = db.prepare('SELECT title, machine FROM sessions WHERE key = ?').get(key) as { title: string | null; machine: string | null } | undefined;
   return [s?.title || key, s?.machine].filter(Boolean).join(' · ');
@@ -81,14 +79,20 @@ function view(db: DatabaseSync, row: Row): MergePreviewView {
   };
 }
 
-export function mountMergeRoutes(app: Hono, db: DatabaseSync, deps: DomainDeps, requireUser: MiddlewareHandler, llm: MergeLlm | null, onProjectReviewQueued?: () => void): void {
+export type MergePreviews = {
+  create(source: string, selection: z.infer<typeof MergeSelection>): MergePreviewView | { error: 'understanding_disabled'; message: string };
+  read(id: string): MergePreviewView | null;
+  apply(id: string, overwrite: string[]): OpResult | null;
+  settled(): Promise<void> | undefined;
+};
+
+export function createMergePreviews(db: DatabaseSync, deps: DomainDeps, llm: MergeLlm | null): MergePreviews {
+  let generating: Promise<void> | undefined;
   // A preview still generating belongs to a process that is gone: its model call died with it.
   db.prepare("UPDATE merge_previews SET status = 'failed', error = ?, updated_at = ? WHERE status = 'generating'").run('服务重启，预览没有生成完；请重新生成', deps.now().toISOString());
 
-  const limit = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: 'too_large', message: `request body must be at most ${MAX_BODY_BYTES} bytes` }, 413) });
   const select = db.prepare('SELECT * FROM merge_previews WHERE id = ?');
   const find = (id: string) => select.get(id) as Row | undefined;
-  const refuse = (c: Context, code: RejectCode, message: string) => c.json({ error: code, message }, rejectStatus(code));
 
   const generate = async (id: string, scope: MergeScope, signature: string, model: MergeLlm): Promise<void> => {
     const finish = (status: 'ready' | 'failed', fields: { draft?: unknown; coverage?: unknown; error?: string }) =>
@@ -112,42 +116,58 @@ export function mountMergeRoutes(app: Hono, db: DatabaseSync, deps: DomainDeps, 
     }
   };
 
-  app.post('/projects/:id/merge-previews', requireUser, limit, async (c) => {
-    const req = await readBody(c, Create);
+  return {
+    create(source: string, req: z.infer<typeof MergeSelection>) {
+      if (!llm) return { error: 'understanding_disabled' as const, message: '理解层未启用，无法根据会话证据生成合并预览' };
+      const scope = resolveMergeScope(db, source, req.target, req.sessions);
+      if (db.prepare("SELECT 1 FROM merge_previews WHERE status = 'generating'").get())
+        throw new OpRejected('conflict', '已有一份合并预览正在生成，请等它结束后再试');
+      const id = deps.newId('mp');
+      const now = deps.now().toISOString();
+      const signature = mergeSignature(db, scope);
+      db.prepare(
+        `INSERT INTO merge_previews (id, source_id, target_id, mode, session_keys, status, signature, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'generating', ?, ?, ?)`,
+      ).run(id, scope.source, scope.target, scope.mode, JSON.stringify(scope.sessions), signature, now, now);
+      generating = generate(id, scope, signature, llm);
+      return view(db, find(id)!);
+    },
+    read(id: string): MergePreviewView | null {
+      const row = find(id);
+      return row ? view(db, row) : null;
+    },
+    apply(id: string, overwrite: string[]): OpResult | null {
+      const row = find(id);
+      if (!row) return null;
+      return execute(db, deps, { op: 'apply_merge', actor: 'user', args: { preview: id, ...previewScope(row), overwrite_locked: overwrite } });
+    },
+    settled: () => generating,
+  };
+}
+
+export function mountMergeRoutes(app: Hono, previews: MergePreviews, requireUser: MiddlewareHandler, onProjectReviewQueued?: () => void): void {
+  const limit = bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: 'too_large', message: `request body must be at most ${MAX_BODY_BYTES} bytes` }, 413) });
+  app.post('/projects/:id/merge-previews', requireUser, limit, async c => {
+    const req = await readBody(c, MergeSelection);
     if (req instanceof Response) return req;
-    if (llm === null) return c.json({ error: 'understanding_disabled', message: '理解层未启用，无法根据会话证据生成合并预览' }, 409);
-    let scope: MergeScope;
     try {
-      scope = resolveMergeScope(db, c.req.param('id'), req.target, req.sessions);
-    } catch (e) {
-      if (e instanceof OpRejected) return refuse(c, e.code, e.message);
-      throw e;
+      const preview = previews.create(c.req.param('id'), req);
+      return 'status' in preview ? c.json(preview, 202) : c.json(preview, 409);
+    } catch (error) {
+      if (error instanceof OpRejected) return c.json({ error: error.code, message: error.message }, rejectStatus(error.code));
+      throw error;
     }
-    // One draft at a time: each can be many model calls, and a second one would only race the first.
-    if (db.prepare("SELECT 1 FROM merge_previews WHERE status = 'generating'").get()) return refuse(c, 'conflict', '已有一份合并预览正在生成，请等它结束后再试');
-    const id = deps.newId('mp');
-    const now = deps.now().toISOString();
-    const signature = mergeSignature(db, scope);
-    db.prepare(
-      `INSERT INTO merge_previews (id, source_id, target_id, mode, session_keys, status, signature, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 'generating', ?, ?, ?)`,
-    ).run(id, scope.source, scope.target, scope.mode, JSON.stringify(scope.sessions), signature, now, now);
-    void generate(id, scope, signature, llm);
-    return c.json(view(db, find(id)!), 202);
   });
-
-  app.get('/merge-previews/:id', requireUser, (c) => {
-    const row = find(c.req.param('id'));
-    return row === undefined ? c.json({ error: 'not_found' }, 404) : c.json(view(db, row));
+  app.get('/merge-previews/:id', requireUser, c => {
+    const preview = previews.read(c.req.param('id'));
+    return preview ? c.json(preview) : c.json({ error: 'not_found' }, 404);
   });
-
-  app.post('/merge-previews/:id/apply', requireUser, limit, async (c) => {
-    const req = await readBody(c, Apply);
+  app.post('/merge-previews/:id/apply', requireUser, limit, async c => {
+    const req = await readBody(c, MergeApproval);
     if (req instanceof Response) return req;
-    const row = find(c.req.param('id'));
-    if (row === undefined) return c.json({ error: 'not_found' }, 404);
-    const result: OpResult = execute(db, deps, { op: 'apply_merge', actor: 'user', args: { preview: row.id, ...previewScope(row), overwrite_locked: req.overwrite_locked ?? [] } });
-    if (result.status === 'rejected') return refuse(c, result.code, result.message);
+    const result = previews.apply(c.req.param('id'), req.overwrite_locked ?? []);
+    if (!result) return c.json({ error: 'not_found' }, 404);
+    if (result.status === 'rejected') return c.json({ error: result.code, message: result.message }, rejectStatus(result.code));
     if (result.status === 'applied' && result.project_review_queued) onProjectReviewQueued?.();
     return c.json(result);
   });

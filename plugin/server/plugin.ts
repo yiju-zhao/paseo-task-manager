@@ -9,6 +9,8 @@ import type { PaseoSource } from '../../src/server/ingest-repo.ts';
 import { ToolStorage } from '../../src/server/tool-storage.ts';
 import { modelSettings } from '../shared/models.ts';
 import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
+import { defaultDeps } from '../../src/domain/types.ts';
+import { registerBoardWrites } from './board-writes.ts';
 import { registerBoard } from './board.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
 import { HistoryImport } from './collector/history-import.ts';
@@ -85,6 +87,12 @@ export default function contribute(server: Pick<PluginServerContext, 'registerSe
     return starting;
   }
   void boot();
+  const deps = defaultDeps();
+  registerBoardWrites(server, async () => {
+    await starting;
+    if (!center || stopped) throw new Error(reason || '中心尚未就绪');
+    return { ...center, deps, sources: { config: { ...config, paseoHostSelection }, startedAt } };
+  });
   registerBoard(server, {
     center: async () => {
       await starting;

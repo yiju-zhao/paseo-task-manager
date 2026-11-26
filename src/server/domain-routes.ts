@@ -2,9 +2,10 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Context, Hono, MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
+import { QuestionAnswer } from '../shared/board-writes.ts';
 import { answerQuestion, dismissQuestion } from '../domain/answers.ts';
 import { readRow } from '../domain/changes.ts';
-import { execute } from '../domain/execute.ts';
+import { executeUserOperation } from '../domain/execute.ts';
 import type { OpName } from '../domain/ops.ts';
 import { getProject, listProjects, listQuestions } from '../domain/read.ts';
 import type { QuestionView } from '../domain/read.ts';
@@ -43,8 +44,6 @@ const UpdateBlocker = z.object({ text: Str, kind: Str, status: z.literal('cleare
 
 const LinkSession = z.object({ project_id: Str, milestone_id: Str.nullable().optional() }).strict();
 const IgnoreSession = z.object({ ignored: z.boolean() }).strict();
-
-const Answer = z.union([z.object({ option_index: z.number() }).strict(), z.object({ text: Str }).strict()]);
 
 const ProjectFilter = z.object({ stage: z.enum(STAGES).optional(), priority: z.enum(PRIORITIES).optional() });
 const QUESTION_STATUSES = ['pending', 'answered', 'withdrawn', 'expired'] as const satisfies readonly QuestionView['status'][];
@@ -123,7 +122,7 @@ export function mountDomainRoutes(app: Hono, db: DatabaseSync, config: ServerCon
     onError: (c) => c.json({ error: 'too_large', message: `request body must be at most ${MAX_BODY_BYTES} bytes` }, 413),
   });
 
-  const asUser = (op: OpName, args: unknown): OpResult => execute(db, deps, { op, args, actor: 'user' });
+  const asUser = (op: OpName, args: Record<string, unknown>): OpResult => executeUserOperation(db, deps, op, args);
   const reply = (c: Context, result: OpResult, created: boolean): Response => {
     if (result.status === 'applied' && result.project_review_queued) onProjectReviewQueued?.();
     return respond(c,result,created);
@@ -207,9 +206,7 @@ export function mountDomainRoutes(app: Hono, db: DatabaseSync, config: ServerCon
   actWith('PATCH', '/projects/:id/blockers/:bid', UpdateBlocker, (p, { status, ...fields }) => {
     const edited = asUser('set_blocker', { project: p.id, id: p.bid, ...fields });
     if (status === undefined || edited.status === 'rejected') return edited;
-    // Two operations, one event each; the answer is the clearing's result (it has no `id` of its own).
-    const cleared = asUser('clear_blocker', { project: p.id, id: p.bid });
-    return cleared.status === 'applied' ? { ...cleared, id: p.bid } : cleared;
+    return asUser('clear_blocker', { project: p.id, id: p.bid });
   });
   act('DELETE', '/projects/:id/blockers/:bid', (p) => asUser('delete_blocker', { project: p.id, id: p.bid }));
 
@@ -230,6 +227,6 @@ export function mountDomainRoutes(app: Hono, db: DatabaseSync, config: ServerCon
     return asUser('revert_event', { event_id: eventId });
   });
 
-  actWith('POST', '/questions/:id/answer', Answer, (p, body) => answerQuestion(db, deps, p.id, body));
+  actWith('POST', '/questions/:id/answer', QuestionAnswer, (p, body) => answerQuestion(db, deps, p.id, body));
   act('POST', '/questions/:id/dismiss', (p) => dismissQuestion(db, deps, p.id));
 }

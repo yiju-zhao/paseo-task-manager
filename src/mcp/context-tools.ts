@@ -166,7 +166,7 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
             '自上次以来',
             overview.changes.map(
               (c) =>
-                `阶段 ${c.stages}，新决策 ${c.decisions}，完成 todo ${c.completed_todos}，新阻塞 ${c.new_blockers}，解除 ${c.cleared_blockers} · ${c.project_id}`,
+                `阶段 ${c.stages}，新决策 ${c.decisions}，完成 todo ${c.completed_todos}，新阻塞 ${c.new_blockers}，解除 ${c.cleared_blockers} · ${oneLine(c.project_title)} · ${c.project_id}`,
             ),
             '调用 pm_timeline',
           ],

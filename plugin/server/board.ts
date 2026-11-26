@@ -6,14 +6,15 @@ import { ContextAddressError, parseAddress } from '../../src/context/address.ts'
 import { markOverviewRead, readOverview, readSession, readTurn } from '../../src/context/read.ts';
 import { explicitItem } from '../../src/context/upstream.ts';
 import { getEvidence } from '../../src/domain/evidence.ts';
-import { getProject, listProjects, sessionLinks } from '../../src/domain/read.ts';
+import { getProject, listProjects, listQuestions, sessionLinks } from '../../src/domain/read.ts';
+import { defaultDeps } from '../../src/domain/types.ts';
 import type { OverviewSources } from '../../src/mcp/context-tools.ts';
 import type { ChangeFeed } from '../../src/server/change-feed.ts';
 import { configuredSources } from '../../src/server/coverage.ts';
 import { searchContext } from '../../src/server/search.ts';
 import { listSessions } from '../../src/server/sessions-repo.ts';
 import {
-  boardChanges, boardEvidence, boardItem, boardOverview, boardProject, boardProjects, boardSearch,
+  boardChanges, boardDirectory, boardQuestions, boardEvidence, boardItem, boardOverview, boardProject, boardProjects, boardSearch,
   boardSession, boardTurn, boardWorkspace,
 } from '../shared/board.ts';
 
@@ -62,6 +63,8 @@ export function registerBoard(server: Pick<PluginServerContext, 'handle'>, optio
     return { overview, targets, contentGaps, incomplete, at: now.toISOString(), machines, excluded: hosts ? hosts.total - hosts.selected.length : 0,
       usage: sources.toolUsage?.() ?? null };
   }));
+  server.handle(boardQuestions, () => read(({ db }, now) => listQuestions(db, { ...defaultDeps(), now: () => now }, { status: 'pending' })));
+  server.handle(boardDirectory, () => read(({ db }, now) => listSessions(db, {}, now).map(({ key, short_id, title, machine, ignored }) => ({ key, short_id, title, machine, ignored: !!ignored }))));
   server.handle(boardProjects, () => read(({ db }, now) => listProjects(db, now, {})));
   server.handle(boardProject, ({ id }) => read(({ db }, now) => getProject(db, now, id)));
   server.handle(boardSearch, ({ query }) => read(({ db }) => searchContext(db, query, { scope: 'all', limit: 20 })));
@@ -70,7 +73,8 @@ export function registerBoard(server: Pick<PluginServerContext, 'handle'>, optio
     if (parsed.kind !== 'session') throw new ContextAddressError('需要 session 地址');
     const session = readSession(db, now, parsed.session, { before });
     const agent = db.prepare(agentObservation).get(session.key) as AgentLocation | undefined;
-    return { session, agent: agent ?? null };
+    const ignored = Boolean(db.prepare('SELECT ignored FROM sessions WHERE key=?').get(session.key)!.ignored);
+    return { session, agent: agent ?? null, ignored, links: sessionLinks(db).get(session.key) ?? [] };
   }));
   server.handle(boardTurn, ({ address }) => read(({ db }) => {
     const parsed = parseAddress(address);

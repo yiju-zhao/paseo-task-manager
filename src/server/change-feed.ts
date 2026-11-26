@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { activeSnoozes } from '../domain/reminders.ts';
 import { STREAM_MAX_EVENTS } from '../shared/stream-protocol.ts';
 import type { StreamEvent, StreamMessage } from '../shared/stream-protocol.ts';
 import type { LiveStatus } from '../shared/protocol.ts';
@@ -47,11 +48,13 @@ export function readFeedState(db: DatabaseSync, now: Date, status: SchedulerStat
     .filter((src) => !sourceAlive(src, now))
     .map((src) => src.source_id)
     .sort();
+  // Only the newest preview can still be generating. Applying an older one also appends a ledger event.
+  const preview = db.prepare('SELECT id, status FROM merge_previews ORDER BY rowid DESC LIMIT 1').get();
   return {
     eventId: m ?? 0,
-    questions: `${q.n}|${q.pending}|${q.last ?? ''}|${q.resolved ?? ''}|${q.evidence}`,
+    questions: JSON.stringify([q, activeSnoozes(db, now)]),
     sessions: JSON.stringify({ sessions, offline }),
-    status: JSON.stringify(status),
+    status: JSON.stringify([status, preview]),
   };
 }
 

@@ -1,6 +1,6 @@
 import type { PluginRpcContract, SubscriptionEvent } from '@getpaseo/plugin';
 import { useRpc, useSubscription, type PluginClientContext, type PluginHostProps, type PluginSurfaceProps } from '@getpaseo/plugin/client';
-import { useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
+import { useQuery, useQueryClient, type QueryFilters, type UseQueryResult } from '@tanstack/react-query';
 import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { z } from 'zod';
@@ -13,16 +13,18 @@ const BoardContext = createContext<Surface | null>(null);
 export const useBoard = (): Surface => useContext(BoardContext)!;
 
 const affected: Record<Exclude<SubscriptionEvent<typeof boardChanges>, 'ready'>, readonly string[]> = {
-  events: ['overview', 'projects', 'project', 'workspace', 'search', 'session'],
-  sessions: ['overview', 'projects', 'project', 'workspace', 'session', 'turn', 'item', 'search', 'evidence'],
-  questions: ['overview', 'projects', 'project', 'workspace'],
-  status: ['overview', 'session', 'turn', 'item', 'search', 'evidence'],
+  events: ['overview', 'projects', 'project', 'workspace', 'search', 'session', 'questions', 'merge.read'],
+  sessions: ['overview', 'projects', 'project', 'workspace', 'session', 'turn', 'item', 'search', 'evidence', 'merge.read', 'directory'],
+  questions: ['overview', 'projects', 'project', 'workspace', 'questions'],
+  status: ['merge.read', 'overview', 'session', 'turn', 'item', 'search', 'evidence'],
 };
 export function BoardSurface({ surface, children }: { surface: Surface; children: ReactNode }): ReactElement {
   const cache = useQueryClient();
   useSubscription(boardChanges, {}, change => {
-    void cache.invalidateQueries({ queryKey: ['task-board', surface.host.id],
-      predicate: q => change === 'ready' || affected[change].includes(String(q.queryKey[2])) }, { cancelRefetch: false });
+    const matching: QueryFilters = { queryKey: ['task-board', surface.host.id],
+      predicate: q => change === 'ready' || affected[change].includes(String(q.queryKey[2])) };
+    // Even a first read can be in flight with an older snapshot when the last preview notification arrives.
+    void cache.cancelQueries(matching).then(() => cache.invalidateQueries(matching, { cancelRefetch: false }));
   });
   return <BoardContext.Provider value={surface}>{children}</BoardContext.Provider>;
 }
@@ -42,10 +44,10 @@ export function Words({ children, tone = 'normal' }: { children: ReactNode; tone
   return <Text style={{ color: tone === 'muted' ? colors.foregroundMuted : tone === 'warning' ? colors.statusWarning : colors.foreground,
     fontSize: size, lineHeight: size + 7, fontWeight: tone === 'heading' || tone === 'title' ? '600' : '400' }}>{children}</Text>;
 }
-export function Action({ label, onPress, selected = false }: { label: string; onPress(): void; selected?: boolean }): ReactElement {
+export function Action({ label, onPress, selected = false, disabled = false }: { disabled?: boolean; label: string; onPress(): void; selected?: boolean }): ReactElement {
   const { theme: { colors } } = useBoard();
-  return <Pressable accessibilityRole="button" accessibilityState={{ selected }} onPress={onPress}
-    style={{ alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: selected ? colors.accent : colors.surface2 }}>
+  return <Pressable accessibilityRole="button" accessibilityState={{ selected, disabled }} disabled={disabled} onPress={onPress}
+    style={{ opacity: disabled ? 0.5 : 1, alignSelf: 'flex-start', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: selected ? colors.accent : colors.surface2 }}>
     <Text style={{ color: selected ? colors.accentForeground : colors.foreground, fontSize: 14 }}>{label}</Text>
   </Pressable>;
 }

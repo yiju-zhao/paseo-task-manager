@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PRIORITIES, STAGES } from './types.ts';
+import { PRIORITIES, STAGES } from '../shared/vocab.ts';
 import type { Actor } from './types.ts';
 
 const Id = z.string().min(1);

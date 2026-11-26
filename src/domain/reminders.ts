@@ -39,9 +39,9 @@ export const UNPUSHED_AFTER_MS = 2 * 3600_000;
 /** A P0/P1 project quiet for this many days is "stalled". */
 export const STALLED_AFTER_DAYS = 7;
 
-function snoozed(db: DatabaseSync, now: Date): Map<string, { until: string | null; fingerprint: string }> {
-  const rows = db.prepare('SELECT key, until, fingerprint FROM reminder_snoozes').all() as Array<{ key: string; until: string | null; fingerprint: string }>;
-  return new Map(rows.filter((r) => r.until === null || r.until > now.toISOString()).map((r) => [r.key, r]));
+export function activeSnoozes(db: DatabaseSync, now: Date): Array<{ key: string; until: string | null; fingerprint: string }> {
+  return db.prepare('SELECT key, until, fingerprint FROM reminder_snoozes WHERE until IS NULL OR until>? ORDER BY key')
+    .all(now.toISOString()) as Array<{ key: string; until: string | null; fingerprint: string }>;
 }
 
 /** Every reminder that holds now, the ones put off left out, by category order then newest first. */
@@ -145,7 +145,7 @@ export function listReminders(db: DatabaseSync, now: Date, sources?: ReminderSou
     }
   }
 
-  const off = snoozed(db, now);
+  const off = new Map(activeSnoozes(db, now).map(s => [s.key, s]));
   const order = (r: Reminder) => REMINDER_CATEGORIES.indexOf(r.category);
   return out
     .filter((r) => {

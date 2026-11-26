@@ -115,7 +115,7 @@ B5a → B5b → B6 → B17。
 | 稍后提醒、不再提醒 | `snoozeReminder` | 待处理 |
 | 新建项目，改标题、一句话、为什么、完成标准、优先级，解锁字段 | `execute` 的对应操作 | 看板、项目页 |
 | 改阶段 | `transition_stage` | 项目页 |
-| 里程碑、todo、决策、阻塞的增删改 | `execute` 的对应操作 | 项目页 |
+| 里程碑、todo、阻塞的增删改，决策的记录和删除 | `execute` 的对应操作 | 项目页 |
 | 关联或取消关联 session、忽略 session | `link_session`、`unlink_session`、`ignore_session` | session 页、项目页 |
 | 撤销一条变更 | 撤销事件 | 项目页时间线 |
 | 合并项目：预览、应用 | merge-previews | 项目页 |

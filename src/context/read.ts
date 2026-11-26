@@ -28,6 +28,7 @@ export function resolveSession(db: DatabaseSync, shortId: string): { key: string
 }
 
 type ChangeSummary = {
+  project_title: string;
   project_id: string;
   stages: number;
   decisions: number;
@@ -35,7 +36,7 @@ type ChangeSummary = {
   new_blockers: number;
   cleared_blockers: number;
 };
-type Pending = { text: string; since: string | null; ref: string };
+type Pending = { reminder_key: string | null; text: string; since: string | null; ref: string };
 type SessionCard = { goal: string; state: string; waiting_on: string | null; next: string | null; note: string | null };
 type SessionOutline = Turn & {
   address: string;
@@ -72,6 +73,7 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
   const links = sessionLinks(db);
   const pending = listReminders(db, now, sources).map((r) => ({
     priority: ({ agent_waiting: 0, waiting_you: 2, stalled: 3, unpushed: 3, waiting_external: 4, source_offline: 4 })[r.category],
+    reminder_key: r.key as string | null,
     text: r.text,
     since: r.since,
     ref: r.short_id ? 's:' + r.short_id : (r.project_id ?? r.key),
@@ -79,7 +81,7 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
   pending.push(
     ...(db
       .prepare(
-        `SELECT prompt AS text, created_at AS since, id AS ref FROM questions WHERE status='pending'
+        `SELECT NULL AS reminder_key, prompt AS text, created_at AS since, id AS ref FROM questions WHERE status='pending'
     AND created_at>=? AND (project_id IS NULL OR project_id IN (SELECT id FROM projects WHERE deleted_at IS NULL))`,
       )
       .all(new Date(now.getTime() - QUESTION_TTL_DAYS * 86400_000).toISOString()) as Pending[]).map(q => ({ ...q, priority: 1 })),
@@ -107,7 +109,7 @@ export function readOverview(db: DatabaseSync, now: Date, reader: string, source
   const dayAgo = new Date(now.getTime() - 24 * 3600_000).toISOString();
   const changes = db
     .prepare(
-      `SELECT project_id, sum(op='transition_stage') stages, sum(op='record_decision') decisions,
+      `SELECT project_id, coalesce((SELECT p.title FROM projects p WHERE p.id=events.project_id), project_id) project_title, sum(op='transition_stage') stages, sum(op='record_decision') decisions,
     sum(op='upsert_todo' AND EXISTS(SELECT 1 FROM json_each(after) j WHERE json_extract(j.value, '$.status')='done')) completed_todos,
     sum(op='set_blocker' AND NOT EXISTS(SELECT 1 FROM json_each(before) WHERE type!='null')) new_blockers,
     sum(op='clear_blocker') cleared_blockers FROM events WHERE project_id IS NOT NULL AND ${cursor ? 'id>?' : 'recorded_at>=?'}

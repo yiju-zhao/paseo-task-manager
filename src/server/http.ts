@@ -2,6 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { ReminderSnooze } from '../shared/board-writes.ts';
 import type { ZodType } from 'zod';
 import type { ToolUsage } from './tool-storage.ts';
 import { explicitTurn, type Upstream } from '../context/upstream.ts';
@@ -23,7 +24,7 @@ import { sourceCoverage, type SourceConfig } from './coverage.ts';
 import { mountAdminRoutes } from './admin-routes.ts';
 import { mountDomainRoutes, userAuth } from './domain-routes.ts';
 import { mountIngestV2 } from './ingest-v2.ts';
-import { mountMergeRoutes } from './merge-routes.ts';
+import { createMergePreviews, mountMergeRoutes } from './merge-routes.ts';
 import type { MergeLlm } from './merge-routes.ts';
 import { principalOf } from './keys.ts';
 import { applySnapshot, findByShortId, insertChunks, listSessions, maxOffset } from './sessions-repo.ts';
@@ -92,7 +93,7 @@ export function createApp(
   // What waits on the user or has stalled, derived from sessions, projects and repositories (../domain/reminders.ts).
   app.get('/reminders', (c) => c.json(listReminders(db, clock(), reminderSources)));
   app.post('/reminders/snooze', userAuth(config, db, clock), async (c) => {
-    const body = z.object({ key: z.string().min(1).max(2000), hours: z.number().int().min(1).max(24 * 90).nullable() }).strict().safeParse(await c.req.json().catch(() => undefined));
+    const body = ReminderSnooze.safeParse(await c.req.json().catch(() => undefined));
     if (!body.success) return c.json({ error: 'invalid', message: z.prettifyError(body.error) }, 400);
     return snoozeReminder(db, clock(), body.data.key, body.data.hours, reminderSources) ? c.json({ ok: true }) : c.json({ error: 'not_found', message: '这条提醒已经不存在' }, 404);
   });
@@ -113,14 +114,13 @@ export function createApp(
   app.get('/status', (c) => c.json({ understanding: scheduler?.status() ?? disabledStatus() }));
 
   app.post('/sync', userAuth(config, db, clock), (c) => {
-    if (scheduler === null) return c.json({ error: 'understanding_disabled' }, 409);
-    scheduler.requestSync();
-    return c.json({ accepted: true }, 202);
+    const sync = requestSync(scheduler);
+    return 'error' in sync ? c.json(sync, 409) : c.json(sync, 202);
   });
 
   mountAuthRoutes(app, db, clock);
   mountDomainRoutes(app, db, config, deps, () => scheduler?.requestProjectReview?.());
-  mountMergeRoutes(app, db, deps, userAuth(config, db, clock), opts.mergeLlm ?? null, () => scheduler?.requestProjectReview?.());
+  mountMergeRoutes(app, opts.previews ?? createMergePreviews(db, deps, opts.mergeLlm ?? null), userAuth(config, db, clock), () => scheduler?.requestProjectReview?.());
   mountAdminRoutes(app, db, config, deps, opts.settings ?? new Settings(db, config, null, clock));
   mountMcp(app, db, config, deps, opts.upstream, opts.toolUsage);
   mountWeb(app, opts.webDir ?? null);
@@ -131,11 +131,17 @@ export function createApp(
 /** One entry of `GET /sessions`: the session and the live projects it is linked to. */
 export type SessionListItem = SessionView & { linked_projects: Array<{ id: string; title: string }> };
 
+export function requestSync(scheduler: Pick<Scheduler, 'requestSync'> | null): { accepted: true } | { error: 'understanding_disabled' } {
+  if (!scheduler) return { error: 'understanding_disabled' };
+  scheduler.requestSync();
+  return { accepted: true };
+}
+
 /**
  * `settings`: the run-time settings (models, provider credential); without one, secrets cannot be set from the UI.
  * `mergeLlm`: the model that drafts merge previews; without one, previews answer `understanding_disabled`.
  */
-export type AppOptions = { plugin?: Pick<Required<SourceConfig>, 'paseoHostSelection'>; afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
+export type AppOptions = { previews?: ReturnType<typeof createMergePreviews>; plugin?: Pick<Required<SourceConfig>, 'paseoHostSelection'>; afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Pick<Scheduler, 'status' | 'requestSync' | 'requestProjectReview'> | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
 
 function mountHerdrIngest(app: Hono, db: DatabaseSync, config: ServerConfig, clock: () => Date): void {
   app.post('/ingest/snapshot', async (c) => {

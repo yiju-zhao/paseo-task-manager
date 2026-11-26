@@ -157,3 +157,9 @@ export function execute(db: DatabaseSync, deps: DomainDeps, input: OpInput): OpR
     throw e;
   }
 }
+
+export function executeUserOperation(db: DatabaseSync, deps: DomainDeps, op: OpName, args: Record<string, unknown>): OpResult {
+  const result = execute(db, deps, { op, args, actor: 'user' });
+  // Both board clients identify the edited blocker in the clearing response, including an already-cleared blocker.
+  return op === 'clear_blocker' && result.status === 'applied' ? { ...result, id: String(args.id) } : result;
+}

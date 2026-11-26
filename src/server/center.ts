@@ -12,7 +12,7 @@ import { Scheduler } from '../understand/scheduler.ts';
 import { disabledStatus, type SchedulerStatus } from '../understand/status.ts';
 import { ChangeFeed } from './change-feed.ts';
 import { understandingSettings, type ServerConfig } from './config.ts';
-import type { MergeLlm } from './merge-routes.ts';
+import { createMergePreviews, type MergeLlm } from './merge-routes.ts';
 import { openDb } from './db.ts';
 import { createApp, type AppOptions } from './http.ts';
 import { Settings } from './settings.ts';
@@ -34,6 +34,8 @@ export type CenterOptions = {
 export type RunningCenter = {
   db: DatabaseSync;
   port: number;
+  previews: ReturnType<typeof createMergePreviews>;
+  scheduler: NonNullable<AppOptions['scheduler']> | null;
   feed: ChangeFeed;
   settings: Settings;
   status(): SchedulerStatus;
@@ -86,7 +88,8 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
         log("agent-pm server: no understanding.oauthTokenFile and no CLAUDE_CODE_OAUTH_TOKEN; model calls use this machine's Claude Code login");
       }
     }
-    const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, mergeLlm, plugin, upstream, toolUsage, afterBatch });
+    const previews = createMergePreviews(database, defaultDeps(), mergeLlm);
+    const app = createApp(database, config, undefined, undefined, { scheduler, webDir, settings, previews, plugin, upstream, toolUsage, afterBatch });
     const status = () => scheduler?.status() ?? disabledStatus();
     const feed = new ChangeFeed(database, { status, boardStatus: plugin ? () => [plugin.paseoHostSelection(), toolUsage?.()] : undefined });
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.listen });
@@ -122,14 +125,14 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
         await closed;
       } finally {
         try {
-          await scheduler?.stop();
+          try { await scheduler?.stop(); } finally { await previews.settled(); }
         } finally {
           database.close();
           guard?.close();
         }
       }
     }
-    return { db: database, feed, port: address, settings, status, stop: () => stopping ??= shutdown() };
+    return { db: database, feed, previews, scheduler, port: address, settings, status, stop: () => stopping ??= shutdown() };
   } catch (err) {
     db?.close();
     guard?.close();

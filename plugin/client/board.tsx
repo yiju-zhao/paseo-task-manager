@@ -5,7 +5,9 @@ import { useDeferredValue, useEffect, useState, type ReactElement } from 'react'
 import { ScrollView, Text, TextInput, View } from 'react-native';
 
 import { STAGES, STAGE_LABEL, type Stage } from '../../src/shared/vocab.ts';
-import { boardOverview, boardProjects, boardSearch } from '../shared/board.ts';
+import { boardOverview, boardProjects, boardQuestions, boardSearch } from '../shared/board.ts';
+import { boardSnooze, boardSync } from '../shared/board-writes.ts';
+import { ProjectEditor, QuestionActions, WriteButton } from './board-controls.tsx';
 import { Action, Card, openAddress, Page, Read, row, sourceLabel, useBoard, useBoardQuery, Words } from './board-ui.tsx';
 
 export function BoardSidebar({ openScreen, currentScreen, theme }: PluginSidebarItemProps): ReactElement {
@@ -31,6 +33,7 @@ function ProjectBoard() {
   const hits = useBoardQuery(boardSearch, { query: term }, !!term);
   const projects = useBoardQuery(boardProjects, {}, !term);
   return <>
+    <ProjectEditor />
     <TextInput value={query} onChangeText={setQuery} accessibilityLabel="搜索项目、摘要和消息" placeholder="搜索项目、摘要和消息"
       placeholderTextColor={theme.colors.foregroundMuted} style={{ minHeight: 42, paddingHorizontal: 12, borderWidth: 1, borderRadius: 6,
         borderColor: theme.colors.border, color: theme.colors.foreground, backgroundColor: theme.colors.surface1 }} />
@@ -63,6 +66,9 @@ export function BoardScreen(): ReactElement {
   const { host, navigation, openScreen } = useBoard();
   const overview = useBoardQuery(boardOverview, {});
   const read = useRpc(boardOverview);
+  const snooze = useRpc(boardSnooze);
+  const sync = useRpc(boardSync);
+  const questions = useBoardQuery(boardQuestions, {}, tab === '待处理');
   const [clock, setClock] = useState(Date.now);
   useEffect(() => {
     if (tab !== '待处理' && tab !== '实时') return;
@@ -75,17 +81,24 @@ export function BoardScreen(): ReactElement {
   const since = useQuery({ queryKey: ['panel-visit', host.id], queryFn: () => read({ markRead: true }),
     enabled: !!overview.data && 'value' in overview.data, staleTime: Infinity, gcTime: 0, refetchOnMount: 'always', retry: false });
   return <Page>
-    <View style={row}>{tabs.map(t => <Action key={t} label={t} selected={tab === t} onPress={() => setTab(t)} />)}</View>
+    <View style={row}>{tabs.map(t => <Action key={t} label={t} selected={tab === t} onPress={() => setTab(t)} />)}<WriteButton label="立即同步" run={() => sync({})} saved="已请求同步" /></View>
     {tab === '看板' ? <ProjectBoard /> : <Read query={overview}>{({ overview: snapshot, targets, at, machines, usage }) => {
       if (tab === '待处理') return <>
         <Words tone="title">待处理 · {snapshot.pending.length}</Words>
         {!snapshot.pending.length && <Words tone="muted">当前没有待处理事项</Words>}
-        {snapshot.pending.map((p, index) => {
+        {snapshot.pending.map((p) => {
           const target = targets[p.ref];
-          return <Card key={p.ref + index}><Words>{p.text}</Words><Words tone="muted">已等待 {duration(p.since ? Date.parse(at) - Date.parse(p.since) + elapsed : null)}</Words>
+          const reminder = p.reminder_key;
+          return <Card key={reminder ?? p.ref}><Words>{p.text}</Words><Words tone="muted">已等待 {duration(p.since ? Date.parse(at) - Date.parse(p.since) + elapsed : null)}</Words>
             <View style={row}>{target?.project && <Action label="打开项目" onPress={() => openAddress(openScreen, target.project!)} />}
               {target?.address && <Action label={target.address} onPress={() => openAddress(openScreen, target.address!)} />}
               {target?.agent && navigation && <Action label="在 Paseo 里打开" onPress={() => navigation.openAgent(target.agent!)} />}</View>
+            {reminder ? <View style={row}><WriteButton label="明天再提醒" run={() => snooze({ key: reminder, hours: 24 })} />
+              <WriteButton label="不再提醒" confirm="直到这条提醒的内容变化再显示？" run={() => snooze({ key: reminder, hours: null })} /></View>
+              : <Read query={questions}>{pending => {
+                const question = pending.find(q => q.id === p.ref);
+                return question && <QuestionActions question={question} />;
+              }}</Read>}
           </Card>;
         })}
         <Words tone="heading">自上次以来</Words>
@@ -95,13 +108,13 @@ export function BoardScreen(): ReactElement {
           if (snapshot.last_event_id > visit.last_event_id) for (const c of snapshot.changes) {
             const prior = changes.get(c.project_id);
             changes.set(c.project_id, prior ? {
-              project_id: c.project_id, stages: prior.stages + c.stages, decisions: prior.decisions + c.decisions,
+              project_title: c.project_title, project_id: c.project_id, stages: prior.stages + c.stages, decisions: prior.decisions + c.decisions,
               completed_todos: prior.completed_todos + c.completed_todos, new_blockers: prior.new_blockers + c.new_blockers,
               cleared_blockers: prior.cleared_blockers + c.cleared_blockers,
             } : c);
           }
           return changes.size ? [...changes.values()].map(c => <Card key={c.project_id}>
-          <Action label={c.project_id} onPress={() => openAddress(openScreen, c.project_id)} />
+          <Action label={c.project_title} onPress={() => openAddress(openScreen, c.project_id)} />
           <Words>阶段变更 {c.stages} · 新决策 {c.decisions} · 完成待办 {c.completed_todos} · 新阻塞 {c.new_blockers} · 解除 {c.cleared_blockers}</Words>
         </Card>) : <Words tone="muted">没有新的项目变更</Words>;
         }}</Read>
