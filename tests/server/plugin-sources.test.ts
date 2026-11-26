@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'vitest';
 import { readOverview } from '../../src/context/read.ts';
 import { SOURCE_REMINDER_AFTER_MS } from '../../src/domain/reminders.ts';
 import { createApp } from '../../src/server/http.ts';
-import { call, config, HERDR_TOKEN, herdrChunks, herdrSession, herdrSnapshot, startCenter, type Center } from '../helpers/center.ts';
+import { call, config, HERDR_TOKEN, herdrSession, herdrSnapshot, startCenter, type Center } from '../helpers/center.ts';
 
 let center: Center;
 const sourceConfig = { ...config, paseoHostSelection: () => ({ selected: ['selected'], total: 2 }) };
@@ -27,17 +27,11 @@ test('Only selected registered Paseo sources appear in coverage, blind spots and
     .map((r: { key: string }) => r.key)).toEqual(['source:paseo-selected']);
 });
 
-test('The plugin rejects legacy herdr ingest before processing bodies or accessing the database.', async () => {
-  const before = center.db.prepare('SELECT total_changes() n').get();
-  const responses = [
-    await call(center, 'POST', '/ingest/snapshot', HERDR_TOKEN, herdrSnapshot([herdrSession('claude:new')])),
-    await call(center, 'POST', '/ingest/chunks', HERDR_TOKEN, herdrChunks('claude:historical', 1, 2)),
-    await call(center, 'GET', '/ingest/offset?machine=fixture&session_key=claude:historical', HERDR_TOKEN),
-  ];
-  expect(responses.map(r => [r.status, r.json.error])).toEqual(Array(3).fill([410, 'herdr_ingest_disabled']));
-  expect(center.db.prepare('SELECT total_changes() n').get()).toEqual(before);
-  expect((await center.app.request('/sessions')).status).toBe(200);
-  expect(await (await center.app.request('/sessions')).text()).toContain('claude:historical');
+test('The plugin HTTP app has no herdr ingest routes.', () => {
+  const paths = center.app.routes.map(route => route.path);
+  for (const path of ['/ingest/snapshot', '/ingest/chunks', '/ingest/offset']) {
+    expect(paths).not.toContain(path);
+  }
 });
 
 test('Blind-spot totals follow session observations even when herdr delivered the pending text.', () => {

@@ -63,52 +63,7 @@ export function createApp(
     return c.json({ error: 'internal' }, 500);
   });
 
-  if (opts.plugin) {
-    app.on(['GET', 'POST'], ['/ingest/snapshot', '/ingest/chunks', '/ingest/offset'], c =>
-      c.json({ error: 'herdr_ingest_disabled', message: 'Paseo 插件不再接收 herdr 上报' }, 410));
-  }
-
-  app.post('/ingest/snapshot', async (c) => {
-    const push = await readPush(c, db, config, clock, SnapshotPush, (p) => [
-      ...p.sessions.map((s, i) => checkKey(s.key, `sessions[${i}].key`, p.machine)),
-      ...p.purged.map((key, i) => checkKey(key, `purged[${i}]`, p.machine)),
-    ]);
-    if (push instanceof Response) return push;
-    applySnapshot(db, push, clock());
-    // The sidebar is decoration: whatever goes wrong computing it must not fail the snapshot push the
-    // collector is waiting on (it would back off and retry a push that was already stored).
-    let labels: SnapshotResponse['labels'] = [];
-    try {
-      labels = sidebarLabels(db, push.sessions.map((s) => s.key));
-    } catch (err) {
-      console.error(`agent-pm server: sidebar labels failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
-    const response: SnapshotResponse = { ok: true, labels };
-    return c.json(response);
-  });
-
-  app.post('/ingest/chunks', async (c) => {
-    const push = await readPush(c, db, config, clock, ChunkPush, (p) =>
-      p.chunks.map((chunk, i) => checkKey(chunk.session_key, `chunks[${i}].session_key`, p.machine)),
-    );
-    if (push instanceof Response) return push;
-    return c.json(insertChunks(db, push, clock()));
-  });
-
-  app.get('/ingest/offset', (c) => {
-    const labels = authenticate(c, db, config, clock);
-    if (labels instanceof Response) return labels;
-    const machine = c.req.query('machine');
-    if (!machine) return c.json({ error: 'query parameter "machine" is required' }, 400);
-    const forbidden = requireMachine(c, labels, machine);
-    if (forbidden) return forbidden;
-    const sessionKey = c.req.query('session_key');
-    if (!sessionKey) return c.json({ error: 'query parameter "session_key" is required' }, 400);
-    // The machine's herdr source's own checkpoint: it counts content kept as standby too, so it is never asked for again.
-    const body: OffsetResponse = { session_key: sessionKey, max_offset_end: maxOffset(db, sessionKey, herdrSourceId(machine)) };
-    return c.json(body);
-  });
-
+  if (!opts.plugin) mountHerdrIngest(app, db, config, clock);
   mountIngestV2(app, db, config, clock, opts.afterBatch);
 
   app.get('/sessions', (c) => {
@@ -181,6 +136,49 @@ export type SessionListItem = SessionView & { linked_projects: Array<{ id: strin
  * `mergeLlm`: the model that drafts merge previews; without one, previews answer `understanding_disabled`.
  */
 export type AppOptions = { plugin?: Pick<Required<SourceConfig>, 'paseoHostSelection'>; afterBatch?: () => void; toolUsage?: () => ToolUsage | undefined; upstream?: Upstream; scheduler?: Scheduler | null; webDir?: string | null; settings?: Settings; mergeLlm?: MergeLlm | null };
+
+function mountHerdrIngest(app: Hono, db: DatabaseSync, config: ServerConfig, clock: () => Date): void {
+  app.post('/ingest/snapshot', async (c) => {
+    const push = await readPush(c, db, config, clock, SnapshotPush, (p) => [
+      ...p.sessions.map((s, i) => checkKey(s.key, `sessions[${i}].key`, p.machine)),
+      ...p.purged.map((key, i) => checkKey(key, `purged[${i}]`, p.machine)),
+    ]);
+    if (push instanceof Response) return push;
+    applySnapshot(db, push, clock());
+    // The sidebar is decoration: whatever goes wrong computing it must not fail the snapshot push the
+    // collector is waiting on (it would back off and retry a push that was already stored).
+    let labels: SnapshotResponse['labels'] = [];
+    try {
+      labels = sidebarLabels(db, push.sessions.map((s) => s.key));
+    } catch (err) {
+      console.error(`agent-pm server: sidebar labels failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const response: SnapshotResponse = { ok: true, labels };
+    return c.json(response);
+  });
+
+  app.post('/ingest/chunks', async (c) => {
+    const push = await readPush(c, db, config, clock, ChunkPush, (p) =>
+      p.chunks.map((chunk, i) => checkKey(chunk.session_key, `chunks[${i}].session_key`, p.machine)),
+    );
+    if (push instanceof Response) return push;
+    return c.json(insertChunks(db, push, clock()));
+  });
+
+  app.get('/ingest/offset', (c) => {
+    const labels = authenticate(c, db, config, clock);
+    if (labels instanceof Response) return labels;
+    const machine = c.req.query('machine');
+    if (!machine) return c.json({ error: 'query parameter "machine" is required' }, 400);
+    const forbidden = requireMachine(c, labels, machine);
+    if (forbidden) return forbidden;
+    const sessionKey = c.req.query('session_key');
+    if (!sessionKey) return c.json({ error: 'query parameter "session_key" is required' }, 400);
+    // The machine's herdr source's own checkpoint: it counts content kept as standby too, so it is never asked for again.
+    const body: OffsetResponse = { session_key: sessionKey, max_offset_end: maxOffset(db, sessionKey, herdrSourceId(machine)) };
+    return c.json(body);
+  });
+}
 
 /**
  * Authenticates an ingest request, then reads and validates its JSON body. Order: bearer token

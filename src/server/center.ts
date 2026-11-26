@@ -108,7 +108,8 @@ export async function startCenter({ config, configDir, webDir, log, runner, plug
       throw err;
     }
     scheduler?.start();
-    log(`agent-pm server: listening on :${address} (${config.listen ?? 'all interfaces'}), db ${config.dbPath}, ${Object.keys(config.collectors).length} collector(s)`);
+    const listening = `agent-pm server: listening on :${address} (${config.listen ?? 'all interfaces'})`;
+    log(plugin ? listening : `${listening}, db ${config.dbPath}, ${Object.keys(config.collectors).length} collector(s)`);
     let stopping: Promise<void> | undefined;
     async function shutdown() {
       stream.close();
