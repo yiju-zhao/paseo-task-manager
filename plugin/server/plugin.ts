@@ -1,24 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { createPaseoClient } from '@getpaseo/client';
-import { openSource, optionalFileCounter } from './route.ts';
-import { HistoryImport } from './collector/history-import.ts';
-import type { PluginServerContext } from '@getpaseo/plugin/server';
-import { startCenter, type RunningCenter } from '../../src/server/center.ts';
-import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
-import { ToolStorage } from '../../src/server/tool-storage.ts';
-import { selectSource } from './sources.ts';
-import { inProcessClient } from './in-process.ts';
 
+import { createPaseoClient } from '@getpaseo/client';
+import type { PluginServerContext } from '@getpaseo/plugin/server';
+
+import { startCenter, type RunningCenter } from '../../src/server/center.ts';
+import type { PaseoSource } from '../../src/server/ingest-repo.ts';
+import { ToolStorage } from '../../src/server/tool-storage.ts';
+import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
 import { PaseoCollectorConfig } from './collector/config.ts';
+import { HistoryImport } from './collector/history-import.ts';
 import { PaseoCollector } from './collector/loop.ts';
 import { Outbox } from './collector/outbox.ts';
-import { upstreamReader } from './upstream.ts';
 import { agentReads, isLoaded } from './collector/sdk.ts';
 import { StateDir } from './collector/state-store.ts';
 import { pluginPaths } from './config.ts';
-import type { PaseoSource } from '../../src/server/ingest-repo.ts';
-import { centerStatus, importProgress, storageState, settings, type Preferences } from '../shared/settings.ts';
+import { DatabaseProblem, openPluginDatabase, pluginConfig } from './database.ts';
+import { inProcessClient } from './in-process.ts';
+import { openSource, optionalFileCounter } from './route.ts';
+import { selectSource } from './sources.ts';
+import { upstreamReader } from './upstream.ts';
 import { RemoteWorkspaces, type UnknownFileCount } from './workspaces.ts';
 
 declare const CHECKOUT_WEB_DIR: string;

@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { closeSync, existsSync, linkSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { loadServerConfig } from '../../src/server/config.ts';
@@ -63,7 +63,7 @@ export function openPluginDatabase(paths: Paths, path: string, fresh: boolean): 
     if (wal && !existsSync(path + '-shm')) throw new DatabaseProblem('无法只读核验缺少共享内存文件的 WAL 数据库：' + path);
     const uri = pathToFileURL(path).href + (wal ? '?mode=ro' : '?immutable=1');
     const probe = new DatabaseSync(uri, { readOnly: true });
-    let actual;
+    let actual: SQLOutputValue | undefined;
     try {
       if (probe.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='settings'").get()) {
         actual = probe.prepare("SELECT value FROM settings WHERE key='database_id'").get()?.value;

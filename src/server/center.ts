@@ -12,6 +12,7 @@ import { Scheduler } from '../understand/scheduler.ts';
 import { disabledStatus } from '../understand/status.ts';
 import { ChangeFeed } from './change-feed.ts';
 import { understandingSettings, type ServerConfig } from './config.ts';
+import type { MergeLlm } from './merge-routes.ts';
 import { openDb } from './db.ts';
 import { createApp, type AppOptions } from './http.ts';
 import { Settings } from './settings.ts';
@@ -50,7 +51,13 @@ export async function startCenter({ config, configDir, webDir, log, runner, upst
   try {
     if (config.dbPath !== ':memory:') {
       const lock = config.dbPath + '.writer';
-      guard = exclusiveLock(lock, () => 'database in use by ' + readFileSync(lock + '.owner', 'utf8'));
+      guard = exclusiveLock(lock, () => {
+        try {
+          return 'database in use by ' + readFileSync(lock + '.owner', 'utf8');
+        } catch {
+          return 'database in use (writer identity unavailable)';
+        }
+      });
       const started = new Date(Date.now() - process.uptime() * 1000).toISOString();
       writeFileSync(lock + '.owner', `pid ${process.pid}, started ${started}`, { mode: 0o600 });
     }
@@ -58,7 +65,7 @@ export async function startCenter({ config, configDir, webDir, log, runner, upst
     db = database;
     const settings = new Settings(database, config, join(configDir, 'secrets'));
     let scheduler: Scheduler | null = null;
-    let mergeLlm = null;
+    let mergeLlm: MergeLlm | null = null;
     if (understanding.enabled) {
       const llm = runner ?? agentSdkRunner({ credential: () => settings.credential() });
       const key = config.understanding?.jevKeyFile;
@@ -75,7 +82,7 @@ export async function startCenter({ config, configDir, webDir, log, runner, upst
     const feed = new ChangeFeed(database, { status: () => scheduler?.status() ?? disabledStatus() });
     const server = serve({ fetch: app.fetch, port: config.port, hostname: config.listen });
     const stream = attachStream(server as Server, feed);
-    let address;
+    let address: number;
     try {
       address = await new Promise<number>((resolve, reject) => {
         server.once('error', reject);
@@ -83,11 +90,13 @@ export async function startCenter({ config, configDir, webDir, log, runner, upst
           server.off('error', reject);
           const bound = server.address();
           if (bound && typeof bound !== 'string') resolve(bound.port);
+          else reject(new Error('center listener has no TCP port'));
         });
       });
     } catch (err) {
       stream.close();
       feed.stop();
+      if (server.listening) await new Promise<void>(resolve => server.close(() => resolve()));
       throw err;
     }
     scheduler?.start();

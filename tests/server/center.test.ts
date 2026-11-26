@@ -45,6 +45,17 @@ test('A second writer reports the owning process and its start time.', async () 
   await expect(startCenter(opts)).rejects.toThrow(new RegExp(`pid ${process.pid}.*started .*T`));
 });
 
+test('A busy writer is reported even before its owner file is published.', async () => {
+  const opts = options();
+  const writer = new DatabaseSync(opts.config.dbPath + '.writer');
+  try {
+    writer.exec('BEGIN EXCLUSIVE');
+    await expect(startCenter(opts)).rejects.toThrow(/database in use/);
+  } finally {
+    writer.close();
+  }
+});
+
 test('Concurrent stops both finish after the same resources are closed.', async () => {
   const opts = options();
   const center = await startCenter(opts);

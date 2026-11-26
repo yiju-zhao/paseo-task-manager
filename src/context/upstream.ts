@@ -12,7 +12,7 @@ export async function explicitItem(db: DatabaseSync, session: string, turn: numb
   const expired = Promise.withResolvers<never>();
   const abort = () => expired.reject(signal.reason);
   signal.addEventListener('abort', abort, { once: true });
-  let reason;
+  let reason: string;
   try {
     signal.throwIfAborted();
     const result = await Promise.race([upstream({ ...raw.pointer, ...raw.cleared }, signal), expired.promise]);

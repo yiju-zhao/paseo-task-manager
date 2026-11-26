@@ -144,3 +144,9 @@ test('The overview suggests raising the cap when remaining tools cannot be clear
   const tools = readTools(db, defaultDeps(), 'fixture', { config, startedAt: center.now, toolUsage: () => store.status() });
   expect((await tools.find(tool => tool.name === 'pm_overview')!.handler({})).text).toContain('请调高上限');
 });
+
+test('The overview renders the used space and cap with readable units.', async () => {
+  const tools = readTools(db, defaultDeps(), 'fixture', { config, startedAt: center.now,
+    toolUsage: () => ({ used: 100 * 1024 ** 2, limit: 2 * 1024 ** 3, oldest: null, blocked: false }) });
+  expect((await tools.find(tool => tool.name === 'pm_overview')!.handler({})).text).toContain('100 MiB / 2 GiB');
+});

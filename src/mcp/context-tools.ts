@@ -15,6 +15,17 @@ import { defineTool } from './define-tool.ts';
 
 const OVERVIEW_SECTION_CHARS = 330;
 
+function formatBytes(bytes: number): string {
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+  let size = bytes;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${Number(size.toFixed(1))} ${units[unit]}`;
+}
+
 export type OverviewSources = { config: SourceConfig; startedAt: Date; upstream?: Upstream; toolUsage?: () => ToolUsage | undefined };
 
 export function searchTool(db: DatabaseSync): ToolDef {
@@ -132,7 +143,7 @@ export function contextTools(db: DatabaseSync, deps: DomainDeps, reader: string,
             '盲区',
             [
               `待摘要会话 ${overview.undigested}，拒摘窗口 ${overview.refusals}`,
-              ...(usage ? [`工具详情 ${usage.used}/${usage.limit} 字节，最早保留 ${usage.oldest ?? '无'}${usage.blocked ? '；已处理的详情清完仍超限，请调高上限' : ''}`] : []),
+              ...(usage ? [`工具详情 ${formatBytes(usage.used)} / ${formatBytes(usage.limit)}，最早保留 ${usage.oldest ?? '无'}${usage.blocked ? '；已处理的详情清完仍超限，请调高上限' : ''}`] : []),
               ...overview.sources.map((s) => `${s.id} · ${s.state} · ${s.last_sync ?? '未同步'}`),
               `${overview.sources.length ? '其余 ' : ''}${overview.healthySources} 个来源正常`,
             ],
