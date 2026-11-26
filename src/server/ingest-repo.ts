@@ -8,6 +8,8 @@ import type {
   BatchV2,
   CheckpointResponse,
   Cursor,
+  LeaseRelease,
+  LeaseReleaseResponse,
   LeaseRequest,
   LeaseResponse,
   SnapshotV2,
@@ -85,6 +87,15 @@ export function acquireLease(db: DatabaseSync, src: PaseoSource, req: LeaseReque
     ).run(req.instance_id, epoch, expires, rev, req.collector_version, now.toISOString(), src.sourceId);
     return { lease_epoch: epoch, expires_at: expires, snapshot_rev: rev };
   });
+}
+
+export function releaseLease(db: DatabaseSync, src: PaseoSource, writer: LeaseRelease, now: Date): LeaseReleaseResponse {
+  // Keep the writer identity and revision so a restart with the same durable state can resume its sequence.
+  const at = now.toISOString();
+  const { changes } = db.prepare(`UPDATE ingest_sources SET lease_expires_at = ?
+    WHERE source_id = ? AND lease_instance = ? AND lease_epoch = ? AND lease_expires_at > ?`)
+    .run(at, src.sourceId, writer.instance_id, writer.lease_epoch, at);
+  return { released: changes === 1 };
 }
 
 /** Refuses a writer that does not hold the current lease; renews it for the one that does. */

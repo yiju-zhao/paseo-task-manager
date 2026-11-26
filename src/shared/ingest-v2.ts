@@ -7,6 +7,7 @@ import { Workspace } from './workspace.ts';
 // (a collector always resumes from what the center committed, never from its own cache).
 //
 //   POST /ingest/v2/lease       take or renew the source's single-writer lease
+//   POST /ingest/v2/lease/release  relinquish a drained writer's lease
 //   POST /ingest/v2/snapshot    heartbeat, daemon health and the directory (complete or partial), revisioned
 //   GET  /ingest/v2/checkpoint  the committed timeline position of one agent
 //   POST /ingest/v2/batches     one immutable batch of timeline events, committed atomically with the next position
@@ -24,6 +25,11 @@ const Writer = {
   instance_id: z.string().min(8).max(100),
   lease_epoch: z.number().int().positive(),
 };
+
+export const LeaseRelease = z.object(Writer);
+export type LeaseRelease = z.infer<typeof LeaseRelease>;
+export const LeaseReleaseResponse = z.object({ released: z.boolean() });
+export type LeaseReleaseResponse = z.infer<typeof LeaseReleaseResponse>;
 
 export const LeaseRequest = z.object({
   source_id: z.string().min(1),

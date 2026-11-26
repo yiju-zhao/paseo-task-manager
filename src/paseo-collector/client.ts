@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { BatchAck, CheckpointResponse, LeaseResponse, SnapshotV2Response, V2Error } from '../shared/ingest-v2.ts';
-import type { BatchV2, LeaseRequest, SnapshotV2 } from '../shared/ingest-v2.ts';
+import { BatchAck, CheckpointResponse, LeaseReleaseResponse, LeaseResponse, SnapshotV2Response, V2Error } from '../shared/ingest-v2.ts';
+import type { BatchV2, LeaseRelease, LeaseRequest, SnapshotV2 } from '../shared/ingest-v2.ts';
 
 /** Worth retrying unchanged later: the center was unreachable, timed out, or answered 408, 429 or 5xx. */
 export class RetryableError extends Error {
@@ -28,6 +28,7 @@ export class FatalError extends Error {
 
 export type CenterClient = {
   lease(req: LeaseRequest): Promise<LeaseResponse>;
+  releaseLease(writer: LeaseRelease): Promise<LeaseReleaseResponse>;
   snapshot(body: SnapshotV2): Promise<SnapshotV2Response>;
   checkpoint(agentId: string): Promise<CheckpointResponse>;
   /** Sends a batch exactly as given (the outbox's bytes), so a resend is byte-identical. */
@@ -84,6 +85,7 @@ export function createCenterClient(opts: CenterClientOptions): CenterClient {
 
   return {
     lease: (req) => call('POST', '/ingest/v2/lease', LeaseResponse, req),
+    releaseLease: writer => call('POST', '/ingest/v2/lease/release', LeaseReleaseResponse, writer),
     snapshot: (body) => call('POST', '/ingest/v2/snapshot', SnapshotV2Response, body),
     checkpoint: (agentId) => call('GET', `/ingest/v2/checkpoint?${new URLSearchParams({ agent_id: agentId })}`, CheckpointResponse),
     batch: (body) => call('POST', '/ingest/v2/batches', BatchAck, body),

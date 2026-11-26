@@ -340,7 +340,8 @@ describe('failures', () => {
   test('local state lost: the collector resumes from the center position without duplicates', async () => {
     fake.addAgent('s');
     history('s', 2);
-    const c1 = collector();
+    // The old writer lost its connection before it could hand off the lease.
+    const c1 = collector({ wrap: client => ({ ...client, releaseLease: async () => { throw new Error('center unreachable'); } }) });
     await cycle(c1);
     await stopped(c1);
     await rm(join(dir, 'state'), { recursive: true, force: true });

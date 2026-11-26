@@ -71,7 +71,8 @@ export class PaseoCollector {
   private readonly deps: CollectorDeps;
   private readonly agents = new Map<string, AgentState>();
   private readonly startedAt: Date;
-  private lease: { epoch: number } | null = null;
+  private lastLeaseEpoch = 0;
+  private needsLease = true;
   private snapshotRev = 0;
   private directoryComplete = false;
   private identityOk: boolean | null = null;
@@ -85,7 +86,7 @@ export class PaseoCollector {
   private reconcileBusy = false;
   private slots: number;
   private waiting: Array<() => void> = [];
-  private stopping = false;
+  private stopping?: Promise<void>;
   private inflight = new Set<Promise<void>>();
   private readonly workspaces: WorkspaceCache;
   private readonly workspaceOf = new Map<string, Workspace | null>();
@@ -110,34 +111,48 @@ export class PaseoCollector {
   // ---- lifecycle ---------------------------------------------------------------------------------------------------
 
   /** Connects, takes the lease, scans, and starts the timers. Resolves once running; `stop()` ends it. */
-  async start(): Promise<void> {
-    await this.connectDaemon();
-    await this.ensureLease();
-    await this.reconcile();
-    await this.heartbeat();
-    this.timers.push(setInterval(() => this.track(this.heartbeat()), this.cfg.heartbeatMs));
-    this.timers.push(setInterval(() => this.track(this.reconcile()), this.cfg.reconcileMs));
-    for (const id of this.deps.outbox.agents()) this.request(id, 0);
+  start(): Promise<void> {
+    return this.track((async () => {
+      await this.connectDaemon();
+      if (this.stopping) return;
+      await this.ensureLease();
+      await this.reconcile();
+      await this.heartbeat();
+      if (this.stopping) return;
+      this.timers.push(setInterval(() => void this.heartbeat(), this.cfg.heartbeatMs));
+      this.timers.push(setInterval(() => this.track(this.reconcile()), this.cfg.reconcileMs));
+      for (const id of this.deps.outbox.agents()) this.request(id, 0);
+    })());
   }
 
   /** Stops reading, lets the content step in progress finish (its batch is in the outbox either way), and disconnects. */
-  async stop(): Promise<void> {
-    if (this.stopping) return;
-    this.stopping = true;
-    for (const t of this.timers) clearInterval(t);
-    this.timers = [];
-    if (this.snapshotSoon) clearTimeout(this.snapshotSoon);
-    for (const a of this.agents.values()) {
-      if (a.timer) clearTimeout(a.timer);
-      a.timer = null;
-      a.unsubscribe?.();
-      a.unsubscribe = null;
-    }
-    this.directoryUnsub?.();
-    this.directoryUnsub = null;
-    await this.settled();
-    await this.deps.sdk.close().catch(() => {});
-    this.deps.state.release();
+  stop(): Promise<void> {
+    return this.stopping ??= Promise.resolve().then(async () => {
+      for (const t of this.timers) clearInterval(t);
+      this.timers = [];
+      if (this.snapshotSoon) clearTimeout(this.snapshotSoon);
+      for (const a of this.agents.values()) {
+        if (a.timer) clearTimeout(a.timer);
+        a.timer = null;
+        a.unsubscribe?.();
+        a.unsubscribe = null;
+      }
+      this.directoryUnsub?.();
+      this.directoryUnsub = null;
+      await this.settled();
+      if (this.lastLeaseEpoch) {
+        try {
+          await this.deps.client.releaseLease({
+            source_id: this.cfg.sourceId, instance_id: this.deps.state.identity.instanceId, lease_epoch: this.lastLeaseEpoch,
+          });
+        } catch (err) {
+          // An unreachable or older center will expire the lease on its own.
+          this.noteError('release lease', err);
+        }
+      }
+      await this.deps.sdk.close().catch(() => {});
+      this.deps.state.release();
+    });
   }
 
   /** Resolves when no content step is running or queued (for tests and orderly shutdown). */
@@ -172,7 +187,7 @@ export class PaseoCollector {
   }
 
   private async ensureLease(): Promise<boolean> {
-    if (this.lease !== null) return true;
+    if (!this.needsLease) return true;
     try {
       const r = await this.deps.client.lease({
         source_id: this.cfg.sourceId,
@@ -180,7 +195,8 @@ export class PaseoCollector {
         server_id: this.cfg.paseo.serverId,
         collector_version: PASEO_COLLECTOR_VERSION,
       });
-      this.lease = { epoch: r.lease_epoch };
+      this.lastLeaseEpoch = r.lease_epoch;
+      this.needsLease = false;
       // A restart of the same instance keeps its lease; its revisions continue above the last one accepted.
       this.snapshotRev = r.snapshot_rev;
       return true;
@@ -193,7 +209,7 @@ export class PaseoCollector {
   private noteError(what: string, err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
     this.lastError = `${what}: ${message}`;
-    if (err instanceof RefusedError && (err.code === 'stale_lease' || err.code === 'lease_held')) this.lease = null;
+    if (err instanceof RefusedError && (err.code === 'stale_lease' || err.code === 'lease_held')) this.needsLease = true;
     this.log(`${what} failed: ${message}${err instanceof FatalError ? ' (needs attention: check token and config)' : ''}`);
   }
 
@@ -221,7 +237,11 @@ export class PaseoCollector {
   }
 
   /** One snapshot push: collector alive, daemon health, and (when connected) the agents. Also the long-turn refresh. */
-  async heartbeat(): Promise<void> {
+  heartbeat(): Promise<void> {
+    return this.track(this.sendSnapshot());
+  }
+
+  private async sendSnapshot(): Promise<void> {
     if (this.heartbeatBusy || this.stopping) return;
     this.heartbeatBusy = true;
     try {
@@ -238,7 +258,7 @@ export class PaseoCollector {
       const body: SnapshotV2 = {
         source_id: this.cfg.sourceId,
         instance_id: this.deps.state.identity.instanceId,
-        lease_epoch: this.lease!.epoch,
+        lease_epoch: this.lastLeaseEpoch,
         collector_version: PASEO_COLLECTOR_VERSION,
         snapshot_rev: ++this.snapshotRev,
         daemon: this.daemonHealth(),
@@ -264,7 +284,7 @@ export class PaseoCollector {
       } catch (err) {
         this.noteError('snapshot', err);
         // A revision the center already has: take the lease again, which says where the numbering stands.
-        if (err instanceof RefusedError && err.code === 'stale_snapshot') this.lease = null;
+        if (err instanceof RefusedError && err.code === 'stale_snapshot') this.needsLease = true;
       }
       // Long turns are read every so often even without notifications; agents not caught up (a step skipped for want
       // of a lease or connection, a paused outbox, a failure whose backoff passed) are tried again.
@@ -299,7 +319,7 @@ export class PaseoCollector {
     if (this.snapshotSoon || this.stopping) return;
     this.snapshotSoon = setTimeout(() => {
       this.snapshotSoon = null;
-      this.track(this.heartbeat());
+      void this.heartbeat();
     }, 500);
   }
 
@@ -491,23 +511,24 @@ export class PaseoCollector {
     if (this.stopping) return;
     if (a === undefined) {
       // Only an outbox left over from an earlier run: flush it.
-      this.track(this.syncAgent(agentId));
+      void this.syncAgent(agentId);
       return;
     }
     if (a.timer !== null) return;
     a.timer = setTimeout(() => {
       a.timer = null;
       if (a.running) a.dirty = true;
-      else this.track(this.syncAgent(agentId));
+      else void this.syncAgent(agentId);
     }, delayMs);
   }
 
-  private track(p: Promise<void>): void {
-    this.inflight.add(p);
-    void p.then(() => this.inflight.delete(p), err => {
-      this.inflight.delete(p);
+  private track(task: Promise<void>): Promise<void> {
+    this.inflight.add(task);
+    void task.then(() => this.inflight.delete(task), err => {
+      this.inflight.delete(task);
       this.noteError('collector task', err);
     });
+    return task;
   }
 
   private async slot(): Promise<() => void> {
@@ -531,7 +552,11 @@ export class PaseoCollector {
    * One content step of an agent: resend its outbox, learn the center's position if unknown, then read and commit
    * batches until nothing settled is left. Errors back off this agent only.
    */
-  async syncAgent(agentId: string): Promise<void> {
+  syncAgent(agentId: string): Promise<void> {
+    return this.track(this.syncContent(agentId));
+  }
+
+  private async syncContent(agentId: string): Promise<void> {
     const a = this.agents.get(agentId);
     if (a?.running) {
       a.dirty = true;
@@ -567,7 +592,7 @@ export class PaseoCollector {
           caughtUp = true;
           break;
         }
-        const batch = { ...plan.batch, source_id: this.cfg.sourceId, instance_id: this.deps.state.identity.instanceId, lease_epoch: this.lease!.epoch };
+        const batch = { ...plan.batch, source_id: this.cfg.sourceId, instance_id: this.deps.state.identity.instanceId, lease_epoch: this.lastLeaseEpoch };
         const file = this.deps.outbox.put(batch);
         try {
           const ack = await this.deps.client.batch(batch);
@@ -645,8 +670,8 @@ export class PaseoCollector {
         this.deps.outbox.remove(file);
         continue;
       }
-      if (batch.lease_epoch !== this.lease!.epoch || batch.instance_id !== this.deps.state.identity.instanceId) {
-        batch = { ...batch, lease_epoch: this.lease!.epoch, instance_id: this.deps.state.identity.instanceId };
+      if (batch.lease_epoch !== this.lastLeaseEpoch || batch.instance_id !== this.deps.state.identity.instanceId) {
+        batch = { ...batch, lease_epoch: this.lastLeaseEpoch, instance_id: this.deps.state.identity.instanceId };
         // Keep the original durable file until ACK. A retry only replaces the lease envelope in memory.
       }
       try {

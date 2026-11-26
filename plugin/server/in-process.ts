@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
-import { acquireLease, applyPaseoSnapshot, bodyHash, commitBatch, getCheckpoint, IngestError, type PaseoSource } from '../../src/server/ingest-repo.ts';
+import { acquireLease, applyPaseoSnapshot, bodyHash, commitBatch, getCheckpoint, IngestError, releaseLease, type PaseoSource } from '../../src/server/ingest-repo.ts';
 import { RefusedError, FatalError, type CenterClient } from './collector/client.ts';
 
 export function inProcessClient(db: DatabaseSync, source: PaseoSource, now = () => new Date(), afterBatch?: () => void): CenterClient {
@@ -17,6 +17,7 @@ export function inProcessClient(db: DatabaseSync, source: PaseoSource, now = () 
   }
   return {
     lease: req => submit(req.source_id, () => acquireLease(db, source, req, now())),
+    releaseLease: writer => submit(writer.source_id, () => releaseLease(db, source, writer, now())),
     snapshot: body => submit(body.source_id, () => {
       if (body.daemon.server_id && body.daemon.server_id !== source.serverId) throw new FatalError('identity_mismatch');
       return applyPaseoSnapshot(db, source, body, now());

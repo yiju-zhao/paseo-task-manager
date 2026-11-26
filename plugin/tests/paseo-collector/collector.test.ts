@@ -32,6 +32,7 @@ test('the collector pages, filters reasoning and retries the identical durable b
       expect(LeaseRequest.parse(body).server_id).toBe(FAKE_SERVER_ID);
       return Response.json({lease_epoch:1,snapshot_rev:rev,expires_at:'2099-01-01T00:00:00Z'});
     }
+    if (path === '/ingest/v2/lease/release') return Response.json({ released: true });
     if (path === '/ingest/v2/snapshot') {
       rev = SnapshotV2.parse(body).snapshot_rev;
       return Response.json({ok:true,snapshot_rev:rev,lease_expires_at:'2099-01-01T00:00:00Z'});

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { LEASE_TTL_MS } from '../../src/shared/ingest-v2.ts';
-import { agent, count, event, PaseoWriter, startCenter } from '../helpers/center.ts';
+import { agent, call, count, event, PaseoWriter, startCenter } from '../helpers/center.ts';
 import type { Center } from '../helpers/center.ts';
 
 let center: Center;
@@ -30,6 +30,19 @@ describe('lease and snapshot revisions', () => {
     const late = await w.batch(w.batchBody(A, null, { epoch: 'e', seq: 1 }, [event('msg:1', 1)]));
     expect(late.json.error).toBe('stale_lease');
     expect(chunks()).toBe(0);
+  });
+
+  test('only the current instance and epoch can release a source for immediate takeover', async () => {
+    const b = new PaseoWriter(center, 'instance-b-0002');
+    const release = (instance_id: string, lease_epoch: number) => call(center, 'POST', '/ingest/v2/lease/release', w.token,
+      { source_id: w.sourceId, instance_id, lease_epoch });
+    expect((await release(b.instance, w.epoch)).json).toEqual({ released: false });
+    expect((await release(w.instance, w.epoch + 1)).json).toEqual({ released: false });
+    expect((await b.lease()).json.error).toBe('lease_held');
+    expect((await release(w.instance, w.epoch)).json).toEqual({ released: true });
+    expect((await b.lease()).status).toBe(200);
+    expect((await release(w.instance, w.epoch)).json).toEqual({ released: false });
+    expect((await w.lease()).json.error).toBe('lease_held');
   });
 
   test('a late or repeated snapshot revision is refused', async () => {

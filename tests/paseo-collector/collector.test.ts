@@ -1,3 +1,5 @@
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +12,7 @@ import { PaseoCollector } from '../../src/paseo-collector/loop.ts';
 import { LEASE_TTL_MS } from '../../src/shared/ingest-v2.ts';
 import { Outbox } from '../../src/paseo-collector/outbox.ts';
 import { StateDir } from '../../src/paseo-collector/state-store.ts';
-import { count, MACHINE, PASEO_SOURCE, PASEO_TOKEN, SERVER_ID, startCenter } from '../helpers/center.ts';
+import { count, MACHINE, PaseoWriter, PASEO_SOURCE, PASEO_TOKEN, SERVER_ID, startCenter } from '../helpers/center.ts';
 import type { Center } from '../helpers/center.ts';
 import { FakePaseo } from '../helpers/fake-paseo.ts';
 
@@ -340,7 +342,8 @@ describe('failures', () => {
   test('local state lost: the collector resumes from the center position without duplicates', async () => {
     fake.addAgent('s');
     history('s', 2);
-    const c1 = collector();
+    // The old writer lost its connection before it could hand off the lease.
+    const c1 = collector({ wrap: client => ({ ...client, releaseLease: async () => { throw new Error('center unreachable'); } }) });
     await cycle(c1);
     await stopped(c1);
     await rm(join(dir, 'state'), { recursive: true, force: true });
@@ -437,6 +440,59 @@ describe('failures', () => {
 });
 
 describe('process', () => {
+  test('stopping waits for an unacknowledged batch before handing the source to another writer', async () => {
+    fake.addAgent('handoff');
+    fake.user('handoff', 'keep this message', 'u1');
+    const sent = Promise.withResolvers<void>();
+    const disconnect = Promise.withResolvers<void>();
+    const first = collector({ wrap: base => ({ ...base, batch: async () => {
+      sent.resolve();
+      await disconnect.promise;
+      throw new Error('ack unavailable');
+    } }) });
+    await first.start();
+    await sent.promise;
+    const stopping = first.stop();
+    const next = new PaseoWriter(center, 'replacement-writer');
+    const outbox = new Outbox(config().stateDir);
+    try {
+      expect((await next.lease()).json.error).toBe('lease_held');
+      expect(outbox.usage().batches).toBe(1);
+    } finally {
+      disconnect.resolve();
+      await stopping;
+    }
+    expect((await next.lease()).status).toBe(200);
+    expect(outbox.pending('handoff')[0].batch.events[0].text).toContain('keep this message');
+  });
+
+  test('a killed writer keeps the source exclusive until the last millisecond of its lease', async () => {
+    const repository = new URL('../../src/server/ingest-repo.ts', import.meta.url).href;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', `
+      import { DatabaseSync } from 'node:sqlite';
+      import { acquireLease } from ${JSON.stringify(repository)};
+      const [file, sourceId, machine, serverId, at] = process.argv.slice(1);
+      const db = new DatabaseSync(file);
+      acquireLease(db, { sourceId, machine, serverId },
+        { source_id: sourceId, instance_id: 'crashed-writer', server_id: serverId, collector_version: 'fixture' }, new Date(at));
+      process.send('ready');
+      process.stdin.resume();
+    `, join(dir, 'center.db'), PASEO_SOURCE, MACHINE, SERVER_ID, center.now.toISOString()], { stdio: ['pipe', 'ignore', 'inherit', 'ipc'] });
+    const exited = once(child, 'exit');
+    try {
+      await Promise.race([once(child, 'message'), exited.then(() => { throw new Error('writer exited before acquiring the lease'); })]);
+      child.kill('SIGKILL');
+      await exited;
+      const next = new PaseoWriter(center, 'replacement-writer');
+      center.advance(LEASE_TTL_MS - 1);
+      expect((await next.lease()).json.error).toBe('lease_held');
+      center.advance(1);
+      expect((await next.lease()).status).toBe(200);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
+    }
+  });
+
   test('a restart on the same state directory keeps the lease and continues its snapshot revisions', async () => {
     fake.addAgent('re');
     const c1 = collector();

@@ -2,11 +2,11 @@ import type { DatabaseSync } from 'node:sqlite';
 import type { Context, Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { ZodType } from 'zod';
-import { BatchV2, LeaseRequest, MAX_V2_BODY_BYTES, SnapshotV2 } from '../shared/ingest-v2.ts';
+import { BatchV2, LeaseRelease, LeaseRequest, MAX_V2_BODY_BYTES, SnapshotV2 } from '../shared/ingest-v2.ts';
 import type { V2Error } from '../shared/ingest-v2.ts';
 import { principalOf } from './keys.ts';
 import type { ServerConfig } from './config.ts';
-import { acquireLease, applyPaseoSnapshot, bodyHash, commitBatch, getCheckpoint, IngestError } from './ingest-repo.ts';
+import { acquireLease, applyPaseoSnapshot, bodyHash, commitBatch, getCheckpoint, IngestError, releaseLease } from './ingest-repo.ts';
 import type { PaseoSource } from './ingest-repo.ts';
 
 // `/ingest/v2/*`: the routes of Paseo collectors. A key (`ingest:paseo:<source>`) belongs to one configured source and may write that
@@ -66,6 +66,13 @@ export function mountIngestV2(app: Hono, db: DatabaseSync, config: ServerConfig,
     } catch (err) {
       return refused(c, err);
     }
+  });
+
+  app.post('/ingest/v2/lease/release', limit, async (c) => {
+    const src = authenticateSource(c, db, config, clock);
+    if (src instanceof Response) return src;
+    const read = await readBody(c, src, LeaseRelease);
+    return read instanceof Response ? read : c.json(releaseLease(db, src, read.body, clock()));
   });
 
   app.post('/ingest/v2/snapshot', limit, async (c) => {
