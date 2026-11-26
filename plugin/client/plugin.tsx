@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useHosts, usePaseo, useSettings, useRpc, type PluginClientContext, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSwitch } from '@getpaseo/plugin/client/ui';
 import { StewardScreen } from './steward.tsx';
+import { localTime } from '../../src/shared/board-time.ts';
 import { BoardScreen, BoardSidebar } from './board.tsx';
 import { ProjectScreen, SessionScreen, TurnScreen, WorkspacePanel } from './board-detail.tsx';
 import { BoardSurface } from './board-ui.tsx';
@@ -120,6 +121,7 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
     setError('');
     try { setHosts(await api.hosts.list()); } catch { setError('读取主机列表失败'); }
   }
+  const lastSync = new Map(sync.flatMap(s => s.at ? [[s.serverId, localTime(s.at)] as const] : []));
   const ids = known.flatMap(h => h.serverId ? [h.serverId] : []);
   return <>
     <DatabaseSettings />
@@ -132,7 +134,7 @@ function CollectionSettings({ theme }: PluginSurfaceProps) {
         onValueChange={on => setHostsSelected(on ? ids : [])} />
       {known.map(h => <SettingsSwitch key={h.serverId ?? ('registrationId' in h ? h.registrationId : h.label)} label={h.label ?? h.serverId ?? '待连接主机'}
         hint={('status' in h ? ({ online: '在线', offline: '离线', connecting: '连接中', error: '连接异常', disabled: '已禁用' })[h.status] : '本机在线')
-          + ' · 最近同步：' + (sync.find(row => row.serverId === h.serverId)?.at ?? '尚未同步')}
+          + ' · 最近同步：' + (lastSync.get(h.serverId ?? '') ?? '尚未同步')}
         disabled={!h.serverId || prefs.saving} value={!!h.serverId && selectedHosts.includes(h.serverId)}
         onValueChange={on => { if (h.serverId) setHostsSelected(on ? [...selectedHosts, h.serverId] : selectedHosts.filter(id => id !== h.serverId)); }} />)}
       {appHosts.filter(h => !ids.includes(h.serverId)).map(h =>

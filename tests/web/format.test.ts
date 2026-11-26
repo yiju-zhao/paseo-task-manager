@@ -1,5 +1,7 @@
 import { expect, test } from 'vitest';
 import type { QuestionOptionView } from '../../src/domain/read.ts';
+import { entityLabel, entityNames } from '../../src/shared/operation-labels.ts';
+import { localTime, preciseTime } from '../../src/shared/board-time.ts';
 import { OP_SCHEMAS } from '../../src/domain/ops.ts';
 import { OP_LABEL, STATUS_LABEL, actorLabel, describeOption, middleEllipsis, opLabel, relTime, shortDate, shortTime, statusClass } from '../../web/src/format.ts';
 
@@ -59,10 +61,10 @@ test('opLabel falls back to the operation name', () => {
 
 test('actorLabel: the user, the curator, any other AI', () => {
   expect(actorLabel('user')).toBe('你');
-  expect(actorLabel('ai:curator')).toBe('AI 整理员');
+  expect(actorLabel('ai:curator')).toBe('整理员');
   expect(actorLabel('ai:claude-12')).toBe('AI（claude-12）');
   expect(actorLabel('ai:')).toBe('AI');
-  expect(actorLabel('system')).toBe('system');
+  expect(actorLabel('system')).toBe('系统');
 });
 
 const NOW = new Date('2026-10-30T12:00:00.000Z');
@@ -116,34 +118,67 @@ test('describeOption: an option without an operation does nothing', () => {
   expect(describeOption({ label: '拒绝', has_op: false, op: null, args: null })).toBe('不做任何操作');
 });
 
-test('describeOption: the operation name and its arguments as key=value', () => {
-  expect(describeOption(option({ args: { project: 'p_1', stage: 'done' } }))).toBe('改阶段 project=p_1 stage=done');
+test('Stage choices name the actual project and its destination in Chinese.', () => {
+  const names = entityNames(new Map([['p_1', '发布验收']]));
+  expect(describeOption(option({ args: { project: 'p_1', stage: 'verify' } }), names)).toBe('把「发布验收」的阶段改为验证');
   expect(describeOption(option({ op: 'clear_blocker', args: {} }))).toBe('解除阻塞');
 });
 
-test('describeOption: non-text values are written as JSON', () => {
-  expect(describeOption(option({ op: 'upsert_todo', args: { position: 3, ignored: false, milestone_id: null, fields: { a: 1 } } }))).toBe(
-    '编辑 todo position=3 ignored=false milestone_id=null fields={"a":1}',
-  );
+test('Todo choices describe the status, priority and milestone by name.', () => {
+  const names = new Map([['todos:t_1', '复核'], ['milestones:m_1', '发布']]);
+  const description = describeOption(option({ op: 'upsert_todo', args: { id: 't_1', status: 'done', priority: 'P1', milestone_id: 'm_1' } }), names);
+  expect(description).toContain('「复核」');
+  expect(description).toContain('完成');
+  expect(description).toContain('P1');
+  expect(description).toContain('「发布」');
+  expect(description).not.toMatch(/t_1|m_1|=/);
 });
 
-test('describeOption: a long value is cut at 40 characters with …', () => {
-  const forty = 'x'.repeat(40);
-  expect(describeOption(option({ op: 'record_decision', args: { text: forty } }))).toBe(`记录决策 text=${forty}`);
-  expect(describeOption(option({ op: 'record_decision', args: { text: `${forty}y` } }))).toBe(`记录决策 text=${forty}…`);
-  // Cut by characters, not by UTF-16 units: an emoji is not split in half.
-  const emoji = '😀'.repeat(41);
-  expect(describeOption(option({ op: 'record_decision', args: { text: emoji } }))).toBe(`记录决策 text=${'😀'.repeat(40)}…`);
+test.each([
+  [option({ op: 'ignore_session', args: { session: 'session-key', ignored: false } }), '恢复跟踪「验收会话」'],
+  [option({ op: 'upsert_milestone', args: { position: 3 } }), '添加里程碑，排序设为「3」'],
+  [option({ op: 'upsert_todo', args: { milestone_id: null } }), '添加待办，无所属里程碑'],
+  [option({ op: 'update_project', args: { project: 'p_1', fields: { priority: null, title: '交付清单' } } }), '修改「交付验收」，优先级设为未定，标题设为「交付清单」'],
+] as const)('Structured arguments describe their effect in words: %j', (choice, expected) => {
+  const names = entityNames([['p_1', '交付验收']], undefined, [{ key: 'session-key', title: '验收会话' }]);
+  expect(describeOption(choice, names)).toBe(expected);
 });
 
-test('describeOption: a text_arg says where the typed text goes', () => {
-  expect(describeOption(option({ op: 'record_decision', args: { project: 'p_1' }, text_arg: 'text' }))).toBe('记录决策 project=p_1（填入 text）');
-  expect(describeOption(option({ op: 'record_decision', args: {}, text_arg: 'fields.title' }))).toBe('记录决策（填入 fields.title）');
+test('Option text clips long values without splitting characters.', () => {
+  const forty = '😀'.repeat(40);
+  expect(describeOption(option({ op: 'record_decision', args: { text: forty } }))).toBe('记录决策「' + forty + '」');
+  expect(describeOption(option({ op: 'record_decision', args: { text: forty + '尾' } }))).toBe('记录决策「' + forty + '…」');
 });
 
-test('describeOption: an operation without args and an unknown operation name still read', () => {
-  expect(describeOption({ label: 'x', has_op: true, op: 'revert_event', args: null })).toBe('撤销');
-  expect(describeOption({ label: 'x', has_op: true, op: 'future_op' as never, args: { a: 'b' } })).toBe('future_op a=b');
+test('Text choices tell the reader which field their answer supplies.', () => {
+  expect(describeOption(option({ op: 'record_decision', args: { project: 'p_1' }, text_arg: 'text' }))).toContain('用你的回答填写内容');
+  expect(describeOption(option({ op: 'update_project', args: {}, text_arg: 'fields.title' }))).toContain('用你的回答填写标题');
+});
+
+test('Missing arguments and older unknown operations have readable fallbacks.', () => {
+  expect(describeOption({ label: 'x', has_op: true, op: 'revert_event', args: null })).toBe('撤销变更');
+  expect(describeOption({ label: 'x', has_op: true, op: 'future_op' as never, args: { a: 'b' } })).toBe('未识别的操作');
+});
+
+test('Timeline entities show current names and distinguish a deleted blocker.', () => {
+  const project = { id: 'p_1', title: '交付验收', blockers: [{ id: 'b_1', text: '等待审批' }], milestones: [], todos: [], decisions: [], contributions: [] };
+  expect(entityLabel('blockers:b_1', entityNames([], project))).toBe('等待审批');
+  expect(entityLabel('blockers:b_1', new Map())).toBe('已删除的阻塞');
+});
+
+test('The board names the human and AI actors.', () => {
+  expect(actorLabel('user')).toBe('你');
+  expect(actorLabel('ai:curator')).toBe('整理员');
+  expect(actorLabel('ai:decider')).toBe('决策员');
+});
+
+test('Board times use local calendar boundaries for today, this year and earlier years.', () => {
+  const now = new Date(2026, 10, 26, 13);
+  expect(localTime(new Date(2026, 10, 26, 9, 5).toISOString(), now)).toBe('09:05');
+  expect(localTime(new Date(2026, 2, 3, 23, 55).toISOString(), now)).toBe('03/03 23:55');
+  expect(localTime(new Date(2025, 11, 31, 23, 55).toISOString(), now)).toBe('2025/12/31 23:55');
+  expect(preciseTime(new Date(2026, 10, 26, 9, 5, 3, 42).toISOString())).toMatch(/^2026\/11\/26 09:05:03\.042 UTC[+-]\d\d:\d\d$/);
+  expect(localTime('2026-03-03', now)).toBe('03/03');
 });
 
 test('middleEllipsis leaves short text alone and cuts a long one in the middle, keeping the end', () => {

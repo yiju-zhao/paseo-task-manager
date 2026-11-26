@@ -221,7 +221,7 @@ export function ProjectPage({ id }: { id: string }) {
           {pending.length > 0 ? (
             <Section title={`待你回答 · ${pending.length}`}>
               {pending.map((q) => (
-                <QuestionCard key={q.id} question={q} onDone={answered} />
+                <QuestionCard key={q.id} question={q} project={data} projectTitles={titles} onDone={answered} />
               ))}
             </Section>
           ) : null}

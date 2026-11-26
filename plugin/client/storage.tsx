@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useRpc } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection } from '@getpaseo/plugin/client/ui';
+import { localTime } from '../../src/shared/board-time.ts';
 import type { RpcOutput } from '@getpaseo/plugin';
 import { storageState } from '../shared/settings.ts';
 
@@ -38,10 +39,10 @@ export function StorageSettings({ limit, saving, save }: { limit: number; saving
 
   return <SettingsSection title="工具详情存储">
     <SettingsRow label={usage ? `已用 ${(usage.used / MIB).toFixed(2)} MiB，上限 ${limit / MIB} MiB` : '等待读取用量'}
-      hint={usage ? `最早保留：${usage.oldest ?? '无'}${usage.blocked ? '；仍超限，请调高上限' : ''}` : undefined} error={error || undefined} />
+      hint={usage ? `最早保留：${usage.oldest ? localTime(usage.oldest) : '无'}${usage.blocked ? '；仍超限，请调高上限' : ''}` : undefined} error={error || undefined} />
     <SettingsInput label="存储上限（MiB）" initialValue={value} disabled={loading || saving}
       onChangeText={text => { setValue(text); setPreview(undefined); setError(''); }} />
-    {preview && <SettingsRow label={`预计清除 ${preview.clearBytes} 字节，清除后最早保留：${preview.oldest ?? '无'}`} />}
+    {preview && <SettingsRow label={`预计清除 ${preview.clearBytes} 字节，清除后最早保留：${preview.oldest ? localTime(preview.oldest) : '无'}`} />}
     <SettingsAction label="修改工具详情上限" actionLabel={preview ? '确认清除并保存' : '应用上限'}
       disabled={!usage || saving || loading || !Number.isSafeInteger(bytes) || bytes <= 0 || bytes === limit} onPress={() => void update()} />
     {preview && <SettingsAction label="保留当前上限" actionLabel="取消" onPress={() => setPreview(undefined)} />}

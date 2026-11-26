@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import type { FormEvent } from 'react';
-import type { QuestionView } from '../../../src/domain/read.ts';
+import type { ButtonHTMLAttributes, FormEvent } from 'react';
+import type { ProjectDetail, QuestionOptionView, QuestionView } from '../../../src/domain/read.ts';
 import { apiSend, errorText } from '../api.ts';
-import { describeOption } from '../format.ts';
+import { describeOption, entityNames, optionDetailProject } from '../../../src/shared/operation-labels.ts';
+import { useApi } from '../use-api.ts';
 import { useInbox } from '../inbox.tsx';
 import { EvidenceLink } from './evidence-drawer.tsx';
 
@@ -19,7 +20,22 @@ const WHY_LABEL: Record<NonNullable<QuestionView['why_user']>, string> = {
   missing_information: '缺少信息',
 };
 
-export function QuestionCard({ question, projectTitle, onDone }: { question: QuestionView; projectTitle?: string; onDone?: () => void }) {
+type OptionContext = { owner: string | null; projectTitles?: ReadonlyMap<string, string>; project?: ProjectDetail; sessions?: { key: string; title: string }[] };
+function OptionButton({ option, context, ...button }: ButtonHTMLAttributes<HTMLButtonElement> & {
+  option?: QuestionOptionView; context: OptionContext;
+}) {
+  const id = option && optionDetailProject(option, context.owner);
+  const detail = useApi<ProjectDetail>(id && id !== context.project?.id ? '/projects/' + encodeURIComponent(id) : null, ['projects', 'sessions']);
+  const names = entityNames(context.projectTitles ?? [], detail.data ?? context.project, context.sessions);
+  return <button {...button} title={option && describeOption(option, names)} />;
+}
+
+export function QuestionCard({ question, projectTitle, projectTitles, project, knownSessions, onDone }: {
+  question: QuestionView; projectTitle?: string; projectTitles?: ReadonlyMap<string, string>; project?: ProjectDetail; knownSessions?: OptionContext['sessions']; onDone?: () => void;
+}) {
+  const needsSessions = question.options.some(o => o.args?.session || o.args?.from_session || o.args?.sessions);
+  const sessions = useApi<{ key: string; title: string }[]>(!knownSessions && needsSessions ? '/sessions' : null, ['sessions']);
+  const context = { owner: question.project_id, projectTitles, project, sessions: knownSessions ?? sessions.data };
   const inbox = useInbox();
   const [busy, setBusy] = useState(false);
   // Once the server took the answer the question is no longer pending: keep the card shut until the list drops it.
@@ -77,14 +93,9 @@ export function QuestionCard({ question, projectTitle, onDone }: { question: Que
       {question.kind === 'text' ? (
         <form className="q-text" onSubmit={submit}>
           <input type="text" aria-label="你的回答" placeholder="输入回答" value={text} disabled={disabled} onChange={(e) => setText(e.target.value)} />
-          <button
-            type="submit"
-            // A text question runs its first option with the typed text filled in.
-            title={question.options.length > 0 ? describeOption(question.options[0]) : undefined}
-            disabled={disabled || answer === ''}
-          >
+          <OptionButton type="submit" option={question.options[0]} context={context} disabled={disabled || answer === ''}>
             提交
-          </button>
+          </OptionButton>
         </form>
       ) : question.kind === 'confirm' && question.options.length === 2 ? (
         <>
@@ -93,17 +104,17 @@ export function QuestionCard({ question, projectTitle, onDone }: { question: Que
           ) : null}
           <div className="q-options q-yesno">
             {question.options.map((option, index) => (
-              <button
+              <OptionButton
                 key={index}
                 type="button"
                 className={index === 0 ? 'q-yes' : 'q-no'}
-                title={describeOption(option)}
+                option={option} context={context}
                 disabled={disabled}
                 aria-describedby={recommended === index ? `${question.id}-rec` : undefined}
                 onClick={() => void send('answer', { option_index: index })}
               >
                 {index === 0 ? '是' : '否'}
-              </button>
+              </OptionButton>
             ))}
             {recommended !== null ? <span id={`${question.id}-rec`} className="visually-hidden">AI 建议的选项</span> : null}
           </div>
@@ -112,9 +123,9 @@ export function QuestionCard({ question, projectTitle, onDone }: { question: Que
         <ul className="q-options q-choices">
           {question.options.map((option, index) => (
             <li key={index} className={recommended === index ? 'is-recommended' : undefined}>
-              <button type="button" title={describeOption(option)} disabled={disabled} onClick={() => void send('answer', { option_index: index })}>
+              <OptionButton type="button" option={option} context={context} disabled={disabled} onClick={() => void send('answer', { option_index: index })}>
                 {option.label}
-              </button>
+              </OptionButton>
               {option.detail ? <span className="q-detail">{option.detail}</span> : null}
               {recommended === index ? <span className="q-badge">建议</span> : null}
             </li>

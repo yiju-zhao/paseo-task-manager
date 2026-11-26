@@ -57,8 +57,8 @@ export function ActivityRow({ item, titles, now }: { item: ActivityItem; titles?
   );
 }
 
-function ActionQueue({ coverage, questions, titles, now, reload }: {
-  coverage: SourceCoverage[] | undefined; questions: QuestionView[]; titles: Map<string, string>; now: Date; reload(): void;
+function ActionQueue({ coverage, questions, titles, sessions, now, reload }: {
+  coverage: SourceCoverage[] | undefined; questions: QuestionView[]; titles: Map<string, string>; sessions: SessionListItem[]; now: Date; reload(): void;
 }) {
   const { needYou, attribution } = splitQuestions(questions);
   const faults = (coverage ?? []).filter((s) => s.state !== 'ok');
@@ -68,7 +68,7 @@ function ActionQueue({ coverage, questions, titles, now, reload }: {
         <h3 className="group-label">{`需要你决策 · ${needYou.length + attribution.length}`}</h3>
         <p className="dim queue-note">只有看板本身的事（项目归并、阶段、你锁定的内容）需要在这里决定。</p>
         {needYou.length + attribution.length === 0 ? <p className="empty">没有需要你在 agent-pm 里决定的事。</p> : null}
-        {needYou.slice(0, QUEUE_QUESTIONS).map((q) => <QuestionCard key={q.id} question={q} projectTitle={q.project_id ? titles.get(q.project_id) : undefined} onDone={reload} />)}
+        {needYou.slice(0, QUEUE_QUESTIONS).map((q) => <QuestionCard key={q.id} question={q} projectTitles={titles} knownSessions={sessions} projectTitle={q.project_id ? titles.get(q.project_id) : undefined} onDone={reload} />)}
         {needYou.length > QUEUE_QUESTIONS ? <a className="queue-more" href="#/inbox">{`另有 ${needYou.length - QUEUE_QUESTIONS} 个待决定 → Inbox`}</a> : null}
         {attribution.length > 0 ? (
           <a className="queue-row" href="#/inbox">
@@ -241,7 +241,7 @@ export function OverviewPage() {
         <Metric label="采集异常" value={coverage.data === undefined ? '—' : faults} tone={faults > 0 ? 'bad' : undefined} href="#/sessions" hint={coverage.data === undefined ? '需要登录' : undefined} />
       </div>
       <div className="console-grid">
-        <ActionQueue coverage={coverage.data} questions={inbox?.data ?? []} titles={titles} now={now} reload={reload} />
+        <ActionQueue sessions={sessions.data ?? []} coverage={coverage.data} questions={inbox?.data ?? []} titles={titles} now={now} reload={reload} />
         <Fleet sessions={list} now={now} />
         <Portfolio cards={cards} activity={a} now={now} />
         <Panel title="工作量" meta={a ? `近 ${ACTIVITY_DAYS} 天收到 ${a.total_daily.reduce((x, y) => x + y, 0)} 段对话，其中未归属 ${a.unlinked_daily.reduce((x, y) => x + y, 0)} 段` : '加载中…'} actions={<a href="#/review">打开复盘 →</a>} className="volume">

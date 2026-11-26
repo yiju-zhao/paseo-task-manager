@@ -68,7 +68,7 @@ beforeEach(() => {
   window.addEventListener(AUTH_EVENT, onAuth);
   localStorage.clear();
   setToken('tok-1');
-  fetchMock.mockImplementation(async () => applied());
+  fetchMock.mockImplementation(async input => String(input) === '/sessions' ? json([]) : applied());
 });
 
 afterEach(() => {
@@ -86,10 +86,9 @@ test('shows the prompt, the project it is about, and one button per option', () 
 });
 
 test('an option button says what it would do in its title', () => {
-  render(<QuestionCard question={question()} />);
+  render(<QuestionCard question={question()} projectTitles={new Map([['p_1', '交付验收']])} />);
   const title = screen.getByRole('button', { name: '标记完成' }).getAttribute('title') ?? '';
-  expect(title).toContain('改阶段');
-  expect(title).toContain('stage=done');
+  expect(title).toBe('把「交付验收」的阶段改为完成');
   expect(screen.getByRole('button', { name: '都不是' }).getAttribute('title')).toBe('不做任何操作');
 });
 
@@ -155,7 +154,7 @@ test('a text question has no option buttons, and the submit button says what it 
   expect(screen.queryByRole('button', { name: '记录' })).toBeNull();
   const title = screen.getByRole('button', { name: '提交' }).getAttribute('title') ?? '';
   expect(title).toContain('记录决策');
-  expect(title).toContain('（填入 text）');
+  expect(title).toContain('（用你的回答填写内容）');
 });
 
 test('pressing Enter in the text box submits it', async () => {

@@ -8,7 +8,7 @@ import { STAGES, STAGE_LABEL, type Stage } from '../../src/shared/vocab.ts';
 import { boardOverview, boardProjects, boardQuestions, boardSearch } from '../shared/board.ts';
 import { boardSnooze, boardSync } from '../shared/board-writes.ts';
 import { ProjectEditor, QuestionActions, WriteButton } from './board-controls.tsx';
-import { Action, Card, openAddress, Page, Read, row, sourceLabel, useBoard, useBoardQuery, Words } from './board-ui.tsx';
+import { Action, BoardTime, Card, openAddress, Page, Provenance, Read, row, useBoard, useBoardQuery, Words } from './board-ui.tsx';
 
 export function BoardSidebar({ openScreen, currentScreen, theme }: PluginSidebarItemProps): ReactElement {
   const overview = useBoardQuery(boardOverview, {});
@@ -38,7 +38,7 @@ function ProjectBoard() {
       placeholderTextColor={theme.colors.foregroundMuted} style={{ minHeight: 42, paddingHorizontal: 12, borderWidth: 1, borderRadius: 6,
         borderColor: theme.colors.border, color: theme.colors.foreground, backgroundColor: theme.colors.surface1 }} />
     {term ? <Read query={hits}>{matches => matches.length ? matches.map((hit, index) => <Card key={hit.ref + index}>
-      <Words>{hit.snippet}</Words><Words tone="muted">{hit.kind === 'digest' ? '推断' : hit.kind === 'message' ? '记录' : '记录 · 台账摘录'} · {hit.ts}</Words>
+      <Words>{hit.snippet}</Words><BoardTime prefix={(hit.kind === 'digest' ? '推断' : hit.kind === 'message' ? '记录' : '记录 · 台账摘录') + ' · '} at={hit.ts} />
       <Action label={hit.ref} onPress={() => openAddress(openScreen, hit.ref, hit.project_id)} />
     </Card>) : <Words tone="muted">没有匹配结果</Words>}</Read> : <Read query={projects}>{cards => {
       const stages = STAGES.filter(s => cards.some(p => p.stage === s));
@@ -48,7 +48,7 @@ function ProjectBoard() {
           {cards.filter(p => p.stage === s).map(p => <Card key={p.id}>
             <Action label={p.title} onPress={() => openScreen({ screenId: 'project', params: { id: p.id } })} />
             {p.summary && <Words>{p.summary}</Words>}
-            <Words tone="muted">{sourceLabel(p.locks.includes('summary') ? 'user' : p.created_by, p.last_activity_at)}</Words>
+            <Provenance actor={p.locks.includes('summary') ? 'user' : p.created_by} at={p.last_activity_at} />
             <Words tone="muted">{p.priority ?? '优先级未定'} · {p.open_todos.length} 项待办 · {p.open_blockers.length} 项阻塞</Words>
           </Card>)}
         </View>);
@@ -131,10 +131,10 @@ export function BoardScreen(): ReactElement {
       </>;
       const states: Record<string, string> = { ok: '正常', offline: '离线', never_reported: '尚未上报', daemon_down: 'daemon 离线' };
       return <><Words tone="title">来源 · {machines.length}</Words>
-        {machines.map(s => <Card key={s.id}><Words tone="heading">{s.machine}</Words><Words>{states[s.state]} · {s.id}</Words>{s.last_sync && <Words tone="muted">{s.last_sync}</Words>}</Card>)}
+        {machines.map(s => <Card key={s.id}><Words tone="heading">{s.machine}</Words><Words>{states[s.state]} · {s.id}</Words>{s.last_sync && <BoardTime prefix="最近同步 · " at={s.last_sync} />}</Card>)}
         <Words tone="heading">摘要覆盖</Words><Words>待摘要会话 {snapshot.undigested} · 拒摘窗口 {snapshot.refusals}</Words>
         {usage && <><Words tone="heading">工具详情用量</Words><Words>{(usage.used / 1048576).toFixed(2)} MiB / {(usage.limit / 1048576).toFixed(0)} MiB</Words>
-          <Words tone="muted">最早保留 {usage.oldest ?? '暂无'}{usage.blocked ? ' · 清理后仍超限' : ''}</Words></>}
+          <BoardTime prefix="最早保留 " at={usage.oldest} empty="暂无" suffix={usage.blocked ? ' · 清理后仍超限' : ''} /></>}
       </>;
     }}</Read>}
   </Page>;

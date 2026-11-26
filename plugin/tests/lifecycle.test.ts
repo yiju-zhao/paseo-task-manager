@@ -1,11 +1,10 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { once } from 'node:events';
 import { afterEach, expect, test, vi } from 'vitest';
 import { openDb } from '../../src/server/db.ts';
 import { config } from '../../tests/helpers/center.ts';
+import { nextCenterPort } from '../../tests/helpers/ephemeral-center.ts';
 import { FakePaseo, FAKE_SERVER_ID } from './helpers/fake-paseo.ts';
 import contribute from '../server/plugin.ts';
 
@@ -21,18 +20,14 @@ vi.mock('../server/route.ts', () => ({
 const dirs: string[] = [];
 afterEach(() => {
   remoteHosts.length = 0;
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
-async function prepare() {
+function prepare() {
   const dir = mkdtempSync(join(tmpdir(), 'plugin-lifecycle-'));
   dirs.push(dir);
-  const probe = createServer().listen(0, '127.0.0.1');
-  await once(probe, 'listening');
-  const address = probe.address();
-  if (!address || typeof address === 'string') throw new Error('expected a TCP port');
-  await new Promise<void>(resolve => probe.close(() => resolve()));
   const daemon = join(dir, 'daemon');
   const conf = join(dir, 'paseo-task-manager', FAKE_SERVER_ID);
   mkdirSync(daemon);
@@ -45,14 +40,14 @@ async function prepare() {
   vi.stubEnv('XDG_CONFIG_HOME', dir);
   vi.stubEnv('XDG_STATE_HOME', join(dir, 'state'));
   vi.stubGlobal('CHECKOUT_WEB_DIR', dir);
-  writeFileSync(join(conf, 'config.json'), JSON.stringify({ ...config, collectors: undefined, port: address.port, dbPath: join(dir, 'data', 'center.db'), understanding: { enabled: false } }));
-  return `http://127.0.0.1:${address.port}/status`;
+  writeFileSync(join(conf, 'config.json'), JSON.stringify({ ...config, collectors: undefined, dbPath: join(dir, 'data', 'center.db'), understanding: { enabled: false } }));
 }
 
 test('Reloading the contribution releases the previous listener, subscriptions and timers.', async () => {
-  const endpoint = await prepare();
+  prepare();
   const unsubscribe = vi.fn();
   for (let i = 0; i < 2; i++) {
+    const bound = nextCenterPort();
     const cleanup = contribute({
       registerSettings: definition => ({
         read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({}) }),
@@ -60,8 +55,9 @@ test('Reloading the contribution releases the previous listener, subscriptions a
       }),
       handle: () => {}, addHook: () => () => {},
     });
+    const endpoint = `http://127.0.0.1:${await bound}/status`;
     try {
-      await vi.waitFor(async () => expect((await fetch(endpoint)).ok).toBe(true));
+      expect((await fetch(endpoint)).ok).toBe(true);
     } finally {
       await cleanup();
     }
@@ -71,10 +67,11 @@ test('Reloading the contribution releases the previous listener, subscriptions a
 });
 
 test('Deselecting the host stops its collector and preserves the registration.', async () => {
-  await prepare();
+  prepare();
   sdk = new FakePaseo();
   const closed = vi.spyOn(sdk, 'close');
   let deselect = () => {};
+  const bound = nextCenterPort();
   const cleanup = contribute({
     registerSettings: definition => ({
       read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts: [FAKE_SERVER_ID] }) }),
@@ -86,6 +83,7 @@ test('Deselecting the host stops its collector and preserves the registration.',
     handle: () => {}, addHook: () => () => {},
   });
   try {
+    await bound;
     await vi.waitFor(() => expect(sdk.status).toBe('connected'));
     deselect();
     await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
@@ -96,11 +94,12 @@ test('Deselecting the host stops its collector and preserves the registration.',
 });
 
 test('A stale selection disappears from coverage when its host leaves the daemon directory.', async () => {
-  const endpoint = await prepare();
+  prepare();
   const db = openDb(join(dirs[0], 'data', 'center.db'));
   db.prepare("INSERT INTO ingest_sources(source_id,kind,machine,server_id) VALUES ('old','paseo','fixture','removed')").run();
   db.close();
   remoteHosts.push({ serverId: 'registered', label: 'fixture', enabled: true, status: 'offline' });
+  const bound = nextCenterPort();
   const cleanup = contribute({
     registerSettings: definition => ({
       read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts: ['removed', 'registered'] }) }),
@@ -109,6 +108,7 @@ test('A stale selection disappears from coverage when its host leaves the daemon
     handle: () => {}, addHook: () => () => {},
   });
   try {
+    const endpoint = `http://127.0.0.1:${await bound}`;
     await vi.waitFor(async () => {
       const res = await fetch(new URL('/coverage', endpoint), { headers: { authorization: 'Bearer ' + config.userToken } });
       expect(await res.json()).toMatchObject([{ source_id: 'paseo-fixture' }]);
@@ -123,9 +123,10 @@ test.each([
   { scenario: 'one selected', selectedHosts: [FAKE_SERVER_ID], first: '', last: '另有 1 台机器未打开采集' },
   { scenario: 'all selected', selectedHosts: [FAKE_SERVER_ID, 'remote'], first: '', last: '' },
 ])('The overview describes host coverage with $scenario.', async ({ selectedHosts, first, last }) => {
-  const endpoint = await prepare();
+  prepare();
   sdk = new FakePaseo();
   remoteHosts.push({ serverId: 'remote', label: 'Remote', enabled: true, status: 'offline' });
+  const bound = nextCenterPort();
   const cleanup = contribute({
     registerSettings: definition => ({
       read: async () => ({ status: 'ready', revision: '', values: definition.schema.parse({ selectedHosts }) }),
@@ -134,6 +135,7 @@ test.each([
     handle: () => {}, addHook: () => () => {},
   });
   try {
+    const endpoint = `http://127.0.0.1:${await bound}`;
     await vi.waitFor(async () => {
       const response = await fetch(new URL('/mcp', endpoint), {
         method: 'POST',

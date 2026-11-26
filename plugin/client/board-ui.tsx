@@ -1,10 +1,11 @@
 import type { PluginRpcContract, SubscriptionEvent } from '@getpaseo/plugin';
 import { useRpc, useSubscription, type PluginClientContext, type PluginHostProps, type PluginSurfaceProps } from '@getpaseo/plugin/client';
 import { useQuery, useQueryClient, type QueryFilters, type UseQueryResult } from '@tanstack/react-query';
-import { createContext, useContext, type ReactElement, type ReactNode } from 'react';
+import { createContext, useContext, useState, type ReactElement, type ReactNode } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import type { z } from 'zod';
 
+import { localTime, preciseTime } from '../../src/shared/board-time.ts';
 import { boardChanges, boardOverview } from '../shared/board.ts';
 
 type BoardNavigation = Pick<PluginClientContext, 'openScreen' | 'openSettings'>;
@@ -80,9 +81,19 @@ export function Read<V>({ query, children }: { query: UseQueryResult<{ value: V 
     <Action label="打开插件设置" onPress={() => openSettings('collection')} /></Card>;
   return <>{children(query.data.value)}</>;
 }
-export function sourceLabel(actor: string, at: string | null, checkedAt?: string | null): string {
-  return (actor === 'user' || checkedAt ? '确认' : '推断') + ' · 截至 ' + (checkedAt ?? at ?? '时间未知').replace('T', ' ').replace(/\.\d{3}Z$/, ' UTC')
-    + (checkedAt ? ' · 已核对' : '');
+export function BoardTime({ at, prefix = '', suffix = '', empty = '时间未知' }: { at: string | null; prefix?: string; suffix?: string; empty?: string }): ReactElement {
+  const [expanded, setExpanded] = useState(false);
+  const [hovered, setHovered] = useState(false);
+  if (!at) return <Words tone="muted">{prefix}{empty}{suffix}</Words>;
+  const full = preciseTime(at);
+  return <Pressable accessibilityRole="button" accessibilityLabel={prefix + full + suffix} accessibilityState={{ expanded: expanded || hovered }}
+    style={{ alignSelf: 'flex-start' }} onHoverIn={() => setHovered(true)} onHoverOut={() => setHovered(false)} onPress={() => setExpanded(!expanded)}>
+    <Words tone="muted">{prefix}{expanded || hovered ? full : localTime(at)}{suffix}</Words>
+  </Pressable>;
+}
+
+export function Provenance({ actor, at, checked, prefix = '' }: { actor: string; at: string | null; checked?: string | null; prefix?: string }): ReactElement {
+  return <BoardTime at={checked ?? at} prefix={prefix + (actor === 'user' || checked ? '确认' : '推断') + ' · 截至 '} suffix={checked ? ' · 已核对' : ''} />;
 }
 export function openAddress(openScreen: BoardNavigation['openScreen'], address: string, project?: string | null): void {
   if (!address.startsWith('s:')) {

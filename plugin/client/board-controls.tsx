@@ -4,11 +4,11 @@ import { useState, type ReactElement, type ReactNode } from 'react';
 import { TextInput, View } from 'react-native';
 
 import type { RpcInput } from '@getpaseo/plugin';
-import { describeOption } from '../../src/shared/operation-labels.ts';
+import { describeOption, entityNames, optionDetailProject } from '../../src/shared/operation-labels.ts';
 import { PRIORITIES, STAGES, STAGE_LABEL } from '../../src/shared/vocab.ts';
-import type { BoardDetail, BoardQuestion } from '../shared/board.ts';
+import { boardDirectory, boardProject, boardProjects, type BoardDetail, type BoardQuestion } from '../shared/board.ts';
 import { boardAnswer, boardDismiss, boardOperate } from '../shared/board-writes.ts';
-import { Action, Card, row, useBoard, Words } from './board-ui.tsx';
+import { Action, Card, row, useBoard, useBoardQuery, Words } from './board-ui.tsx';
 
 export function Input({ label, value, change, multiline = false }: {
   label: string; value: string; change(value: string): void; multiline?: boolean;
@@ -152,7 +152,20 @@ export function ItemEditor({ project, kind, item }: { project: BoardDetail; kind
   </>}</Disclosure>;
 }
 
-export function QuestionActions({ question }: { question: BoardQuestion }): ReactElement {
+function OptionEffect({ option, owner, project }: { option: BoardQuestion['options'][number]; owner?: string; project?: BoardDetail }): ReactElement {
+  const id = optionDetailProject(option, owner);
+  const detail = useBoardQuery(boardProject, { id: id ?? '' }, !!id && id !== project?.id);
+  const args = option.args;
+  const projectRefs = [args?.project, args?.target, args?.source, args?.merge_into, args?.table === 'projects' ? args.id : null];
+  const projects = useBoardQuery(boardProjects, {}, projectRefs.some(ref => typeof ref === 'string' && ref !== project?.id));
+  const sessions = useBoardQuery(boardDirectory, {}, !!(option.args?.session || option.args?.from_session || option.args?.sessions));
+  const current = id && id !== project?.id && detail.data && 'value' in detail.data ? detail.data.value : project;
+  const titles = projects.data && 'value' in projects.data ? projects.data.value.map(p => [p.id, p.title] as const) : [];
+  const names = entityNames(titles, current ?? undefined, sessions.data && 'value' in sessions.data ? sessions.data.value : []);
+  return <Words tone="muted">{describeOption(option, names)}</Words>;
+}
+
+export function QuestionActions({ question, project }: { question: BoardQuestion; project?: BoardDetail }): ReactElement {
   const answer = useRpc(boardAnswer);
   const dismiss = useRpc(boardDismiss);
   const [text, setText] = useState('');
@@ -161,7 +174,7 @@ export function QuestionActions({ question }: { question: BoardQuestion }): Reac
     {question.kind === 'text' && <Input label="你的回答" value={text} change={setText} />}
     {(question.kind === 'text' ? question.options.slice(0, 1) : question.options).map((option, index) => <View key={index} style={{ gap: 3 }}>
       {option.detail && <Words>{option.detail}</Words>}
-      <Words tone="muted">{describeOption(option)}</Words>
+      <OptionEffect option={option} owner={typeof question.project_id === 'string' ? question.project_id : undefined} project={project} />
       <WriteButton label={question.kind === 'text' ? '提交回答' : option.label} disabled={question.kind === 'text' && !text.trim()}
         run={() => answer({ id: question.id, answer: question.kind === 'text' ? { text } : { option_index: index } })} />
     </View>)}

@@ -6,7 +6,7 @@ import { View } from 'react-native';
 import { boardProjects, type BoardDetail } from '../shared/board.ts';
 import { boardApplyMerge, boardMergePreview, boardPreview } from '../shared/board-writes.ts';
 import { Choices, Disclosure, WriteButton } from './board-controls.tsx';
-import { Action, Card, row, useBoardQuery, Words } from './board-ui.tsx';
+import { Action, BoardTime, Card, row, useBoardQuery, Words } from './board-ui.tsx';
 
 const labels = { title: '标题', summary: '一句话', why: '为什么', done_criteria: '完成标准' } as const;
 const coverageLabels: Record<string, string> = { read: '已读', partial: '部分已读', ignored: '已忽略', refused: '拒摘', empty: '无原文' };
@@ -54,7 +54,7 @@ function MergeForm({ project, id, setId, close }: { project: BoardDetail; id: st
   return <><Words tone="heading">{preview.source.title} → {preview.target.title}</Words>
     {preview.error && <Words tone="warning">{preview.error}</Words>}
     {preview.stale && <Words tone="warning">项目或证据已变化，请重新生成预览</Words>}
-    {preview.draft && <Card><Words tone="muted">推断 · 截至 {preview.created_at}</Words>
+    {preview.draft && <Card><BoardTime prefix="推断 · 截至 " at={preview.created_at} />
       {(Object.keys(labels) as (keyof typeof labels)[]).map(field => <Words key={field}>{labels[field]} · {preview.draft![field]}</Words>)}
       {preview.draft.title_change_reason && <Words>改名依据 · {preview.draft.title_change_reason}</Words>}
       {preview.draft.unknowns.map((unknown, i) => <Words key={i}>待核实 · {unknown}</Words>)}

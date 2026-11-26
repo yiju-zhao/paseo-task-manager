@@ -112,7 +112,7 @@ export function ProjectCardView({
       {card.pending_questions.map((q) => (
         <QuestionCard
           key={q.id}
-          question={q}
+          question={q} projectTitles={projectTitles}
           projectTitle={q.project_id !== null && q.project_id !== card.id ? projectTitles.get(q.project_id) : undefined}
           onDone={onAnswered}
         />

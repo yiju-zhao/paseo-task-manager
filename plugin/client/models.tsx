@@ -3,6 +3,7 @@ import type { RpcInput, RpcOutput } from '@getpaseo/plugin';
 import { useRpc } from '@getpaseo/plugin/client';
 import { SettingsAction, SettingsInput, SettingsRow, SettingsSection, SettingsSelect, type SettingsInputHandle } from '@getpaseo/plugin/client/ui';
 
+import { localTime } from '../../src/shared/board-time.ts';
 import { CREDENTIAL_MODES } from '../../src/shared/model-settings.ts';
 import { modelSettings } from '../shared/models.ts';
 
@@ -103,7 +104,7 @@ export function ModelSettings() {
     {!state && !readFailed && <SettingsRow label="读取模型设置中" />}
     {state && <>
       <SettingsRow label={!state.enabled ? '理解层已关闭' : state.paused_until ? '理解层已暂停' : '理解层未暂停'}
-        hint={state.paused_until ? state.pause_reason ?? `恢复时间：${new Date(state.paused_until).toLocaleString()}` : undefined} />
+        hint={state.paused_until ? state.pause_reason ?? `恢复时间：${localTime(state.paused_until)}` : undefined} />
       {state.roles.map(row => <ModelChoice key={row.role + ':' + row.model} label={row.label} model={row.model}
         hint={`当前：${row.model} · 最近 7 天调用 ${row.calls} 次，失败 ${row.failures} 次`}
         options={state.model_options} saving={saving} save={model => save({ kind: 'model', role: row.role, model })} />)}

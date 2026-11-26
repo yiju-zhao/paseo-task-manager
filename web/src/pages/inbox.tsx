@@ -38,12 +38,12 @@ export function InboxPage() {
     </div>
     {questions.error && <div className="error-bar" role="alert"><span>{errorText(questions.error)}</span><button type="button" onClick={questions.reload}>重新加载</button></div>}
     {questions.data === undefined ? !questions.error && <p role="status" className="dim">正在加载待处理事项…</p> : questions.error && count === 0 ? null : shown === 0 ? <div className="inbox-empty"><span className="inbox-empty-icon"><Icon name="inbox" /></span><h3>{count === 0 ? '暂时没有待处理事项' : '这个分类暂时没有事项'}</h3><p className="dim">{count === 0 ? '新的项目决策和会话归属问题会出现在这里。' : '切换到其他分类，继续处理剩余事项。'}</p>{count === 0 ? <a className="button" href="#/">返回项目</a> : <button type="button" onClick={() => setFilter('all')}>查看全部事项</button>}</div> : <>
-      {filter !== 'sessions' && needYou.length > 0 && <InboxSection title="需要你" count={needYou.length}>{needYou.map((question) => <article className="inbox-item" key={question.id}>{context(question)}<QuestionCard question={question} onDone={projects.reload} /></article>)}</InboxSection>}
+      {filter !== 'sessions' && needYou.length > 0 && <InboxSection title="需要你" count={needYou.length}>{needYou.map((question) => <article className="inbox-item" key={question.id}>{context(question)}<QuestionCard question={question} projectTitles={titles} knownSessions={sessions.data ?? []} onDone={projects.reload} /></article>)}</InboxSection>}
       {filter !== 'decisions' && attribution.length > 0 && <InboxSection title="待归属的 session" count={attribution.length}>
         {sessions.error && <p className="dim inbox-session-error">会话信息暂时不可用，仍可按会话标识处理归属。</p>}
         {attribution.map((question) => {
           const session = byKey.get(question.session_key ?? '');
-          return <article className="inbox-item" key={question.id}><div className="inbox-session-context">{session && <SessionTag session={session} />}<span>{session?.title ?? question.session_key}</span></div><QuestionCard question={question} onDone={projects.reload} /></article>;
+          return <article className="inbox-item" key={question.id}><div className="inbox-session-context">{session && <SessionTag session={session} />}<span>{session?.title ?? question.session_key}</span></div><QuestionCard question={question} projectTitles={titles} knownSessions={sessions.data ?? []} onDone={projects.reload} /></article>;
         })}
       </InboxSection>}
     </>}

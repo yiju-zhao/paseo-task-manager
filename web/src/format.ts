@@ -1,4 +1,4 @@
-export { OP_LABEL, opLabel, describeOption } from '../../src/shared/operation-labels.ts';
+export { OP_LABEL, opLabel, describeOption, actorLabel } from '../../src/shared/operation-labels.ts';
 
 // How the page words things the server reports as codes: session status, operation names, who did it, how long ago.
 
@@ -25,16 +25,6 @@ export function statusClass(status: string): string {
     default:
       return 'dot-idle';
   }
-}
-
-export function actorLabel(actor: string): string {
-  if (actor === 'user') return '你';
-  if (actor === 'ai:curator') return 'AI 整理员';
-  if (actor.startsWith('ai:')) {
-    const name = actor.slice(3);
-    return name === '' ? 'AI' : `AI（${name}）`;
-  }
-  return actor;
 }
 
 function pad(n: number): string {

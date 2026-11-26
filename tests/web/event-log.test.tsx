@@ -83,7 +83,7 @@ test('a row shows #id, the time, who, what, the entity and the reason', () => {
   expect(r.tagName).toBe('LI');
   expect(r.textContent).toContain('#5');
   expect(within(r).getByText(shortTime('2026-10-29T08:30:00.000Z'))).toBeTruthy();
-  expect(within(r).getByText('AI 整理员')).toBeTruthy();
+  expect(within(r).getByText('整理员')).toBeTruthy();
   expect(within(r).getByText('改阶段')).toBeTruthy();
   expect(within(r).getByText('project:p_1')).toBeTruthy();
   expect(within(r).getByText('评测已经跑通了')).toBeTruthy();

@@ -3,6 +3,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
+import { nextCenterPort } from './helpers/ephemeral-center.ts';
 import { main } from '../src/cli.ts';
 import { loadCollectorConfig } from '../src/collector/config.ts';
 import { PaseoCollectorConfig } from '../src/paseo-collector/config.ts';
@@ -22,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -204,14 +206,6 @@ test('collect exits 1 with the reason when the config cannot be loaded', async (
   expect(server.stderr).toContain('cannot read server config');
 });
 
-async function freePort(): Promise<number> {
-  const probe = createServer();
-  await new Promise<void>((resolve) => probe.listen(0, resolve));
-  const port = (probe.address() as { port: number }).port;
-  await new Promise<void>((resolve) => probe.close(() => resolve()));
-  return port;
-}
-
 function writeServerConfig(port: number, extra: Record<string, unknown> = {}): string {
   const path = join(dir, 'server.json');
   writeFileSync(
@@ -221,25 +215,13 @@ function writeServerConfig(port: number, extra: Record<string, unknown> = {}): s
   return path;
 }
 
-/** Polls `url` until the server answers with JSON. */
-async function fetchJsonWhenUp(url: string): Promise<unknown> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    try {
-      return await (await fetch(url)).json();
-    } catch {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
-  }
-  throw new Error(`${url} never answered`);
-}
-
 /** Starts `server` with `extra` config, reads `/status` once it is up, then aborts it. */
 async function serverStatus(extra: Record<string, unknown>): Promise<{ code: number; stdout: string; stderr: string; status: unknown }> {
-  const port = await freePort();
+  const bound = nextCenterPort();
   const abort = new AbortController();
   const out: string[] = [];
   const err: string[] = [];
-  const done = main(['server', '--config', writeServerConfig(port, extra)], {
+  const done = main(['server', '--config', writeServerConfig(1, extra)], {
     fetch,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
@@ -247,7 +229,7 @@ async function serverStatus(extra: Record<string, unknown>): Promise<{ code: num
   });
   let status: unknown;
   try {
-    status = await fetchJsonWhenUp(`http://127.0.0.1:${port}/status`);
+    status = await (await fetch(`http://127.0.0.1:${await bound}/status`)).json();
   } finally {
     abort.abort();
   }
@@ -256,27 +238,20 @@ async function serverStatus(extra: Record<string, unknown>): Promise<{ code: num
 
 const NO_TOKEN_HINT = /no understanding\.oauthTokenFile and no CLAUDE_CODE_OAUTH_TOKEN/;
 
-test('server serves the api on the configured port until it is aborted', async () => {
-  const port = await freePort();
+test('server serves the api on the listening port until it is aborted', async () => {
+  const bound = nextCenterPort();
   const abort = new AbortController();
   const out: string[] = [];
   const err: string[] = [];
-  const done = main(['server', '--config', writeServerConfig(port)], {
+  const done = main(['server', '--config', writeServerConfig(1)], {
     fetch,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     signal: abort.signal,
   });
+  const port = await bound;
   try {
-    let body: unknown;
-    for (let attempt = 0; body === undefined && attempt < 100; attempt++) {
-      try {
-        body = await (await fetch(`http://127.0.0.1:${port}/sessions`)).json();
-      } catch {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
-    }
-    expect(body).toEqual([]);
+    expect(await (await fetch(`http://127.0.0.1:${port}/sessions`)).json()).toEqual([]);
     expect(out.join('')).toContain(`:${port}`);
   } finally {
     abort.abort();
@@ -287,9 +262,9 @@ test('server serves the api on the configured port until it is aborted', async (
 });
 
 test('server pushes hello on /stream and stops even while a WebSocket is open', async () => {
-  const port = await freePort();
+  const bound = nextCenterPort();
   const abort = new AbortController();
-  const done = main(['server', '--config', writeServerConfig(port, { understanding: { enabled: false } })], {
+  const done = main(['server', '--config', writeServerConfig(1, { understanding: { enabled: false } })], {
     fetch,
     stdout: () => {},
     stderr: () => {},
@@ -297,7 +272,7 @@ test('server pushes hello on /stream and stops even while a WebSocket is open', 
   });
   let closed: Promise<void> | undefined;
   try {
-    await fetchJsonWhenUp(`http://127.0.0.1:${port}/status`);
+    const port = await bound;
     const ws = new WebSocket(`ws://127.0.0.1:${port}/stream`);
     closed = new Promise((resolve) => ws.addEventListener('close', () => resolve()));
     const first = await new Promise<string>((resolve) => ws.addEventListener('message', (e) => resolve(String(e.data)), { once: true }));
@@ -337,7 +312,6 @@ test('server with understanding disabled runs no scheduler', async () => {
 });
 
 test('server exits 1 with a clear message when the oauth token file cannot be read', async () => {
-  const port = await freePort();
   const missing = join(dir, 'missing-token');
   const empty = join(dir, 'empty-token');
   writeFileSync(empty, '  \n');
@@ -346,7 +320,7 @@ test('server exits 1 with a clear message when the oauth token file cannot be re
     [empty, /empty/],
   ] as const) {
     const err: string[] = [];
-    const code = await main(['server', '--config', writeServerConfig(port, { understanding: { oauthTokenFile: file } })], {
+    const code = await main(['server', '--config', writeServerConfig(1, { understanding: { oauthTokenFile: file } })], {
       fetch,
       stdout: () => {},
       stderr: (s) => err.push(s),
